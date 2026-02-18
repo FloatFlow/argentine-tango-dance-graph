@@ -1,0 +1,30 @@
+import src.main
+import src.collection.queue_manager
+import src.collection.tube_client
+import src.storage.graph_store
+import src.storage.resolver
+import src.core.llm_client
+
+# --- Paths ---
+src.collection.queue_manager.QueueManager.state_file = "queue_state.json"
+src.storage.graph_store.GraphStore.db_file = "graph_db.json"
+src.storage.resolver.EntityResolver.alias_file = "aliases.json"
+
+# --- Collection ---
+# Set this if you have a proxy provider to avoid rate limits
+# src.collection.tube_client.TubeClient.proxy_url = "http://user:pass@host:port"
+
+# --- Intelligence ---
+# The model used for the main extraction loop
+src.main.process_video.model_id = "gemini-3-flash-preview"
+
+# Default settings for the LLM Client
+src.core.llm_client.Rhizosphere.model_id = "gemini-3-flash-preview"
+src.core.llm_client.Rhizosphere.model_kwargs = {
+    "temperature": 0.7
+}
+# --- Rate Limiting ---
+# Seconds to wait between processing individual videos
+src.main.main.video_delay = 5
+# Seconds to wait between search queries
+src.main.main.query_delay = 10
