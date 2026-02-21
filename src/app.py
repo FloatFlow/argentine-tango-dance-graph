@@ -517,6 +517,15 @@ with tab_dashboard:
         st.subheader("Discovery Queue")
         queue_list = queue_state.get("queue", [])
         if queue_list:
-            st.dataframe(pd.DataFrame(queue_list, columns=["Query"]), height=400, hide_index=True)
+            # The queue is now a list of [Priority, Query] tuples
+            try:
+                df_queue = pd.DataFrame(queue_list, columns=["Priority", "Query"])
+                # Sort so high priority (low number) is at top
+                df_queue = df_queue.sort_values("Priority", ascending=True)
+                st.dataframe(df_queue, height=400, hide_index=True)
+            except ValueError:
+                # Fallback for legacy/migration state if mixed
+                st.write("Queue format updating...")
+                st.json(queue_list[:10])
         else:
             st.info("Queue is empty.")

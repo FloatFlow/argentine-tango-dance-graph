@@ -32,4 +32,4 @@ src.main.main.video_delay = 10
 # Seconds to wait between search queries
 src.main.main.query_delay = 10
 # Limit of videos to fetch per search query (default 50)
-src.main.main.search_limit = 50
+src.main.main.search_limit = 100
