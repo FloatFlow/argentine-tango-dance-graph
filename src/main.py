@@ -25,7 +25,11 @@ async def process_video(
     resolver: EntityResolver,
     extract_prompt: str,
     model_id: str = "gpt-4o" # Configurable via gin
-):
+) -> bool:
+    """
+    Returns True if video was successfully processed and contained relevant content.
+    Returns False if skipped (seen/amateur) or failed extraction.
+    """
     video_id = video_data['id']
     title = video_data.get('title', '')
 
@@ -35,11 +39,11 @@ async def process_video(
         logger.info(f"Skipping Amateur video: {title}")
         # Mark as seen so we don't re-process it in future searches
         queue_manager.mark_video_seen(video_id)
-        return
+        return False
     
     # Check if already processed
     if queue_manager.is_video_seen(video_id):
-        return
+        return False
 
     logger.info(f"Processing Video: {title} ({video_id})")
 
@@ -47,7 +51,7 @@ async def process_video(
     details = tube_client.fetch_video_details(video_id)
     if not details:
         logger.warning(f"Could not fetch details for {video_id}")
-        return
+        return False
 
     # 2. Prepare context for LLM
     # We construct a string representation of the metadata
@@ -102,15 +106,35 @@ async def process_video(
         # 5. Feed the Flywheel
         # Only add new queries if we successfully extracted meaningful data
         if content.performances:
+            # A. Exploration (Low Priority): General suggestions from LLM
             for query in content.suggested_search_queries:
-                queue_manager.add_query(query)
+                queue_manager.add_query(query, priority=10)
+
+            # B. Exploitation (High Priority): Target newly discovered entities
+            # 1. Dancers
+            for p in content.performances:
+                for dancer in p.dancers:
+                    profile = graph_store.get_dancer_profile(dancer.name)
+                    # Since we just added the video in Step 4, a count of 1 means they are new to the graph
+                    if profile and len(profile.get("videos", [])) <= 1:
+                        logger.info(f"Exploiting new dancer: {dancer.name}")
+                        queue_manager.add_query(f"{dancer.name} tango performance", priority=5)
+            
+            # 2. Videographers
+            if content.videographer:
+                # QueueManager deduplicates, so this only runs once per unique videographer found
+                queue_manager.add_query(f"{content.videographer} tango", priority=5)
 
         # 6. Mark done
         queue_manager.mark_video_seen(video_id)
         queue_manager.save_state()
+        
+        # Return True if we found actual performances, False if extraction was empty (irrelevant)
+        return bool(content.performances)
 
     except Exception as e:
         logger.error(f"LLM Extraction failed for {video_id}: {e}")
+        return False
 
 async def run_maintenance(graph_store: GraphStore, resolver: EntityResolver, llm_client: Rhizosphere):
     """
@@ -150,7 +174,7 @@ async def run_maintenance(graph_store: GraphStore, resolver: EntityResolver, llm
     logger.info("--- Maintenance Complete ---")
 
 @gin.configurable
-async def main(video_delay: int = 5, query_delay: int = 10):
+async def main(video_delay: int = 5, query_delay: int = 10, search_limit: int = 50):
     # DEBUG: Verify Environment / Auth State
     project_id = os.environ.get("VERTEX_PROJECT_ID")
     api_key = os.environ.get("GOOGLE_API_KEY")
@@ -177,7 +201,7 @@ async def main(video_delay: int = 5, query_delay: int = 10):
         return
 
     # Seed if empty
-    if not queue_manager.search_queue:
+    if not queue_manager.queue:
         logger.info("Queue is empty. Seeding with defaults.")
         seeds = [
             "Mundial de Tango 2024",
@@ -187,7 +211,15 @@ async def main(video_delay: int = 5, query_delay: int = 10):
             "Carlitos Espinoza tango"
         ]
         for s in seeds:
-            queue_manager.add_query(s)
+            queue_manager.add_query(s, priority=10)
+
+    # Startup Backfill: Ensure we have exploited all known dancers
+    # This runs every startup but queue_manager deduplicates against 'seen_queries',
+    # so it only adds searches for dancers we haven't targeted yet.
+    logger.info(f"Checking exploitation coverage for {len(graph_store.dancers)} dancers...")
+    for name in graph_store.dancers.keys():
+        # Priority 5 (High) ensures we prioritize filling out the graph over random exploration
+        queue_manager.add_query(f"{name} tango performance", priority=5)
 
     # Main Loop
     query_counter = 0
@@ -204,10 +236,28 @@ async def main(video_delay: int = 5, query_delay: int = 10):
         logger.info(f"--- Running Search Query: '{query}' ---")
         
         # Search
-        results = tube_client.search(query, limit=5) # Small batch to keep momentum
+        # We fetch a larger batch (limit) to allow for filtering/skipping
+        results = tube_client.search(query, limit=search_limit)
+        
+        seen_streak = 0
+        irrelevant_streak = 0
         
         for video_summary in results:
-            await process_video(
+            video_id = video_summary['id']
+            
+            # 1. Dynamic Depth: Check if we are retreading old ground
+            if queue_manager.is_video_seen(video_id):
+                seen_streak += 1
+                # If we see 10 videos in a row we've already processed, assume the rest are also seen
+                if seen_streak >= 10:
+                    logger.info(f"Stopping query '{query}' early due to {seen_streak} consecutive seen videos.")
+                    break
+                continue
+            
+            seen_streak = 0 # Reset streak if we find a new video
+            
+            # 2. Process
+            processed = await process_video(
                 video_summary, 
                 tube_client, 
                 llm_client, 
@@ -217,6 +267,16 @@ async def main(video_delay: int = 5, query_delay: int = 10):
                 extract_prompt
             )
             
+            # 3. Dynamic Depth: Check if results are drifting into irrelevance
+            if processed:
+                irrelevant_streak = 0
+            else:
+                irrelevant_streak += 1
+                # If 10 consecutive videos are amateur or failed extraction, stop this query
+                if irrelevant_streak >= 10:
+                    logger.info(f"Stopping query '{query}' early due to {irrelevant_streak} consecutive irrelevant/failed videos.")
+                    break
+
             # Rate limiting sleep between videos
             await asyncio.sleep(video_delay)
 
