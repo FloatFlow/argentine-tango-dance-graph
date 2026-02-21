@@ -57,6 +57,16 @@ def load_data():
         st.error(f"Failed to load database: {e}")
         return {"videos": {}, "dancers": {}}
 
+def load_queue_state():
+    state_path = "queue_state.json"
+    if not os.path.exists(state_path):
+        return {"queue": [], "seen_videos": [], "seen_channels": []}
+    try:
+        with open(state_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {"queue": [], "seen_videos": [], "seen_channels": []}
+
 # --- Expensive Computation Cache ---
 @st.cache_data
 def get_atlas_data(dancers_data):
@@ -96,6 +106,7 @@ def get_atlas_data(dancers_data):
 data = load_data()
 videos = data.get("videos", {})
 dancers = data.get("dancers", {})
+queue_state = load_queue_state()
 
 # --- Helper Functions ---
 def format_duration(seconds):
@@ -322,43 +333,61 @@ with tab_dashboard:
     c1.metric("Total Videos", len(videos))
     c2.metric("Total Dancers", len(dancers))
     
-    def plot_sorted_bar(data_list, title, color):
-        if not data_list:
-            return
-        counts = Counter(data_list)
-        top_items = counts.most_common(40)
-        if not top_items: return
-            
-        df_counts = pd.DataFrame(top_items, columns=['Name', 'Count'])
-        
-        fig = px.bar(
-            df_counts, 
-            x='Name', 
-            y='Count', 
-            title=title,
-            color_discrete_sequence=[color]
-        )
-        fig.update_xaxes(categoryorder='total descending')
-        fig.update_layout(
-            yaxis=dict(fixedrange=True), 
-            xaxis=dict(fixedrange=False),
-            dragmode='pan'
-        )
-        st.plotly_chart(fig, width="stretch")
-
-    # 1. Top Festivals
-    all_events = []
-    for v in videos.values():
-        evt = v.get("event")
-        if evt and evt.get("name"):
-            all_events.append(evt["name"])
+    # Queue Stats
+    q_len = len(queue_state.get("queue", []))
+    seen_len = len(queue_state.get("seen_videos", []))
+    c3.metric("Pending Queries", q_len, delta=seen_len, delta_color="off")
     
-    plot_sorted_bar(all_events, "Top Festivals (Pareto)", "#EF553B")
-
-    # 2. Top Videographers
-    all_videographers = []
-    for v in videos.values():
-        if v.get("videographer"):
-            all_videographers.append(v["videographer"])
+    st.divider()
+    
+    col_charts, col_queue = st.columns([2, 1])
+    
+    with col_charts:
+        def plot_sorted_bar(data_list, title, color):
+            if not data_list:
+                return
+            counts = Counter(data_list)
+            top_items = counts.most_common(40)
+            if not top_items: return
+                
+            df_counts = pd.DataFrame(top_items, columns=['Name', 'Count'])
             
-    plot_sorted_bar(all_videographers, "Top Videographers", "#00CC96")
+            fig = px.bar(
+                df_counts, 
+                x='Name', 
+                y='Count', 
+                title=title,
+                color_discrete_sequence=[color]
+            )
+            fig.update_xaxes(categoryorder='total descending')
+            fig.update_layout(
+                yaxis=dict(fixedrange=True), 
+                xaxis=dict(fixedrange=False),
+                dragmode='pan'
+            )
+            st.plotly_chart(fig, width="stretch")
+
+        # 1. Top Festivals
+        all_events = []
+        for v in videos.values():
+            evt = v.get("event")
+            if evt and evt.get("name"):
+                all_events.append(evt["name"])
+        
+        plot_sorted_bar(all_events, "Top Festivals (Pareto)", "#EF553B")
+
+        # 2. Top Videographers
+        all_videographers = []
+        for v in videos.values():
+            if v.get("videographer"):
+                all_videographers.append(v["videographer"])
+                
+        plot_sorted_bar(all_videographers, "Top Videographers", "#00CC96")
+        
+    with col_queue:
+        st.subheader("Discovery Queue")
+        queue_list = queue_state.get("queue", [])
+        if queue_list:
+            st.dataframe(pd.DataFrame(queue_list, columns=["Query"]), height=400, hide_index=True)
+        else:
+            st.info("Queue is empty.")

@@ -81715,10 +81715,10 @@
         "Virginia Vasconi": 1,
         "Jaimes Friedgen": 1,
         "Max Vera": 1,
-        "Jimena Hoffner": 1,
         "Gustavo Diaz": 1,
         "Virginia Pandolfi": 1,
-        "Julia Urruty": 1
+        "Julia Urruty": 1,
+        "Jimena Hoeffner": 1
       },
       "events": {
         "Torino Tango Festival": 1,
@@ -82563,9 +82563,9 @@
         "Virginia Vasconi": 1,
         "Jaimes Friedgen": 1,
         "Max Vera": 1,
-        "Jimena Hoffner": 1,
         "Gustavo Diaz": 1,
-        "Julia Urruty": 1
+        "Julia Urruty": 1,
+        "Jimena Hoeffner": 1
       },
       "events": {
         "Gavito Tango Festival": 1,
@@ -104039,11 +104039,11 @@
         "Virginia Vasconi": 1,
         "Jaimes Friedgen": 1,
         "Max Vera": 1,
-        "Jimena Hoffner": 1,
         "Gustavo Diaz": 1,
         "Alice Vasques": 1,
         "Fernando Docampos": 1,
-        "Julia Urruty": 1
+        "Julia Urruty": 1,
+        "Jimena Hoeffner": 1
       },
       "events": {
         "Club Almagro": 1,
@@ -105504,9 +105504,9 @@
         "David Palo": 1,
         "Virginia Vasconi": 2,
         "Max Vera": 1,
-        "Jimena Hoffner": 1,
         "Gustavo Diaz": 1,
-        "Julia Urruty": 1
+        "Julia Urruty": 1,
+        "Jimena Hoeffner": 1
       },
       "events": {
         "Tango on the Rocks": 1,
@@ -111054,9 +111054,9 @@
         "Virginia Vasconi": 1,
         "Jaimes Friedgen": 1,
         "Max Vera": 1,
-        "Jimena Hoffner": 1,
         "Gustavo Diaz": 1,
-        "Julia Urruty": 1
+        "Julia Urruty": 1,
+        "Jimena Hoeffner": 1
       },
       "events": {
         "Tangamente": 1,
@@ -111102,9 +111102,9 @@
         "Virginia Vasconi": 1,
         "Jaimes Friedgen": 1,
         "Max Vera": 1,
-        "Jimena Hoffner": 1,
         "Gustavo Diaz": 1,
-        "Julia Urruty": 1
+        "Julia Urruty": 1,
+        "Jimena Hoeffner": 1
       },
       "events": {
         "Tangamente": 1,
@@ -120537,9 +120537,9 @@
         "Virginia Vasconi": 1,
         "Jaimes Friedgen": 1,
         "Max Vera": 1,
-        "Jimena Hoffner": 1,
         "Gustavo Diaz": 1,
-        "Julia Urruty": 1
+        "Julia Urruty": 1,
+        "Jimena Hoeffner": 1
       },
       "events": {
         "Festival Ladys Tango": 1,
@@ -123085,7 +123085,7 @@
         "MPrjEvdc5L0"
       ],
       "partners": {
-        "Jimena Hoeffner": 1,
+        "Jimena Hoeffner": 2,
         "Johana Copes": 1,
         "Lorena Ermocida": 1,
         "Javier Rodríguez": 1,
@@ -123094,7 +123094,6 @@
         "David Palo": 1,
         "Virginia Vasconi": 1,
         "Jaimes Friedgen": 1,
-        "Jimena Hoffner": 1,
         "Gustavo Diaz": 1,
         "Julia Urruty": 1
       },
@@ -123111,13 +123110,25 @@
     },
     "Jimena Hoeffner": {
       "videos": [
-        "KUElqoT3RT8"
+        "KUElqoT3RT8",
+        "MPrjEvdc5L0"
       ],
       "partners": {
-        "Max Vera": 1
+        "Max Vera": 2,
+        "Johana Copes": 1,
+        "Lorena Ermocida": 1,
+        "Javier Rodríguez": 1,
+        "Rocio Lequio": 1,
+        "Bruno Tombari": 1,
+        "David Palo": 1,
+        "Virginia Vasconi": 1,
+        "Jaimes Friedgen": 1,
+        "Gustavo Diaz": 1,
+        "Julia Urruty": 1
       },
       "events": {
-        "Milonga Parakultural": 1
+        "Milonga Parakultural": 1,
+        "Lady's Tango Festival": 1
       },
       "tags": {},
       "roles": [
@@ -123327,8 +123338,8 @@
         "Virginia Vasconi": 1,
         "Jaimes Friedgen": 1,
         "Max Vera": 1,
-        "Jimena Hoffner": 1,
-        "Gustavo Diaz": 1
+        "Gustavo Diaz": 1,
+        "Jimena Hoeffner": 1
       },
       "events": {
         "Cullera Tango Festival": 2,
@@ -124055,7 +124066,6 @@
         "David Palo": 1,
         "Jaimes Friedgen": 2,
         "Max Vera": 1,
-        "Jimena Hoffner": 1,
         "Gustavo Diaz": 1,
         "Julia Urruty": 1,
         "Jesica Arfenoni": 1,
@@ -124067,7 +124077,8 @@
         "Florencia Borgnia": 1,
         "Maxi Copello": 1,
         "Paloma Rossi": 1,
-        "Diego Amorín": 1
+        "Diego Amorín": 1,
+        "Jimena Hoeffner": 1
       },
       "events": {
         "Lady's Tango Festival": 1,
@@ -124077,31 +124088,6 @@
       "roles": [
         "follower"
       ],
-      "style_embedding": null,
-      "similar_dancers": []
-    },
-    "Jimena Hoffner": {
-      "videos": [
-        "MPrjEvdc5L0"
-      ],
-      "partners": {
-        "Johana Copes": 1,
-        "Lorena Ermocida": 1,
-        "Javier Rodríguez": 1,
-        "Rocio Lequio": 1,
-        "Bruno Tombari": 1,
-        "David Palo": 1,
-        "Virginia Vasconi": 1,
-        "Jaimes Friedgen": 1,
-        "Max Vera": 1,
-        "Gustavo Diaz": 1,
-        "Julia Urruty": 1
-      },
-      "events": {
-        "Lady's Tango Festival": 1
-      },
-      "tags": {},
-      "roles": [],
       "style_embedding": null,
       "similar_dancers": []
     },
@@ -124119,8 +124105,8 @@
         "Virginia Vasconi": 1,
         "Jaimes Friedgen": 1,
         "Max Vera": 1,
-        "Jimena Hoffner": 1,
-        "Julia Urruty": 1
+        "Julia Urruty": 1,
+        "Jimena Hoeffner": 1
       },
       "events": {
         "Lady's Tango Festival": 1
