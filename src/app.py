@@ -149,7 +149,7 @@ def show_dancer_details(dancer_name):
                     name = item.get("name")
                     score = item.get("score", 0)
                     with sim_cols[idx % 2]:
-                        if st.button(f"{name} ({score:.2f})", key=f"modal_sim_{name}", use_container_width=True):
+                        if st.button(f"{name} ({score:.2f})", key=f"modal_sim_{name}", width="stretch"):
                             st.session_state["selected_dancer"] = name
                             st.rerun()
             else:
@@ -200,7 +200,7 @@ with tab_atlas:
         # --- Controls Row ---
         c_search, c_info = st.columns([1, 5])
         with c_search:
-            if st.button("🔍 Search", use_container_width=True):
+            if st.button("🔍 Search", width="stretch"):
                 all_names = sorted(df['name'].tolist())
                 show_search_modal(all_names)
         
@@ -239,19 +239,29 @@ with tab_atlas:
         # Text Styling: Small font, only visible if space allows (Plotly default behavior)
         fig.update_traces(
             textposition='top center',
-            textfont=dict(size=10, color='rgba(200,200,200,0.9)')
+            textfont=dict(size=10, color='rgba(200,200,200,0.9)'),
+            marker=dict(opacity=0.8, line=dict(width=0)) # Default clean look
         )
         
-        # Custom Marker borders for selection highlight
-        fig.update_traces(
-            marker=dict(
-                line=dict(
-                    width=df['border_width'],
-                    color=df['border_color']
-                ),
-                opacity=0.8
-            )
-        )
+        # Explicitly highlight the selected point using a separate trace
+        # This overcomes the issue where 'update_traces' fails to map column data across multiple color traces
+        if active_dancer:
+            selected_row = df[df['name'] == active_dancer]
+            if not selected_row.empty:
+                fig.add_scatter(
+                    x=selected_row['x'],
+                    y=selected_row['y'],
+                    mode='markers',
+                    marker=dict(
+                        size=30, # Match the 'final_size' logic for selected
+                        color='rgba(0,0,0,0)', # Transparent fill to reveal underlying cluster color
+                        line=dict(width=4, color='Red'),
+                        symbol='circle'
+                    ),
+                    hoverinfo='skip', # Let the underlying point handle the hover text
+                    showlegend=False,
+                    customdata=selected_row[['name']] # Enable clicking this ring to keep selection valid
+                )
 
         # --- Auto-Centering Logic ---
         # If a dancer is selected, zoom/pan to their location
@@ -284,7 +294,7 @@ with tab_atlas:
         # Render Chart
         selection = st.plotly_chart(
             fig, 
-            use_container_width=True, 
+            width="stretch", 
             on_select="rerun",
             selection_mode="points",
             config={'scrollZoom': True, 'displayModeBar': True}
@@ -334,7 +344,7 @@ with tab_dashboard:
             xaxis=dict(fixedrange=False),
             dragmode='pan'
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
     # 1. Top Festivals
     all_events = []
