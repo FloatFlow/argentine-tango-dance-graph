@@ -72,16 +72,54 @@ def load_queue_state():
 def get_atlas_data(dancers_data):
     """
     Pre-computes the dataframe and clustering to avoid delays on interaction.
+    Merges dancers with identical coordinates into a single 'Couple' point.
     """
-    plot_data = []
+    # 1. Group by Coordinates to handle overlaps
+    grouped_points = {}
+    
     for name, info in dancers_data.items():
         embedding = info.get("style_embedding")
         if embedding:
-            plot_data.append({
+            # Round to 4 decimals to catch exact/near-exact overlaps
+            key = (round(embedding["x"], 4), round(embedding["y"], 4))
+            
+            if key not in grouped_points:
+                grouped_points[key] = []
+            
+            grouped_points[key].append({
                 "name": name,
-                "x": embedding["x"],
-                "y": embedding["y"],
                 "videos": len(info.get("videos", [])),
+                "x": embedding["x"],
+                "y": embedding["y"]
+            })
+    
+    # 2. Flatten back to list, merging couples
+    plot_data = []
+    for key, group in grouped_points.items():
+        if not group:
+            continue
+            
+        if len(group) == 1:
+            plot_data.append(group[0])
+        else:
+            # Sort by video count (desc) then name to be deterministic
+            group.sort(key=lambda x: (-x["videos"], x["name"]))
+            
+            # Create composite entry
+            names = [g["name"] for g in group]
+            display_name = " & ".join(names[:3]) # Limit to 3 names to avoid huge strings
+            if len(names) > 3:
+                display_name += f" (+{len(names)-3})"
+                
+            # Use data from the first entity (they are overlapping, so x/y is same)
+            primary = group[0]
+            plot_data.append({
+                "name": display_name,
+                "x": primary["x"],
+                "y": primary["y"],
+                "videos": primary["videos"],
+                # Store original names for search/filtering if needed
+                "members": names 
             })
     
     if not plot_data:
@@ -89,18 +127,63 @@ def get_atlas_data(dancers_data):
 
     df = pd.DataFrame(plot_data)
 
-    # 1. Clustering
+    # 3. Clustering
     if len(df) > 10:
-        hdb = HDBSCAN(min_cluster_size=5, min_samples=3)
+        # Adjusted parameters for potentially denser merged points
+        hdb = HDBSCAN(min_cluster_size=4, min_samples=2)
         df['cluster'] = hdb.fit_predict(df[['x', 'y']])
         df['cluster'] = df['cluster'].astype(str)
     else:
         df['cluster'] = "0"
 
-    # 2. Sizing
+    # 4. Sizing
     df['size_log'] = np.log1p(df['videos']) * 8 
     
     return df
+
+
+@st.cache_data
+def get_library_data(videos_data):
+    """
+    Flattens video dictionary into a DataFrame for the Library tab.
+    """
+    rows = []
+    for vid_id, data in videos_data.items():
+        # Extract Orchestra
+        orchestra = None
+        if data.get("music") and data["music"].get("orchestra"):
+            orchestra = data["music"]["orchestra"]
+            
+        # Extract Event
+        event = None
+        if data.get("event") and data["event"].get("name"):
+            event = data["event"]["name"]
+            
+        # Extract Dancers (just names for searching)
+        dancers_list = []
+        if data.get("performances"):
+            for p in data["performances"]:
+                dancers_list.extend([d.get("name") for d in p.get("dancers", [])])
+        # Legacy fallback
+        elif data.get("dancers"):
+            dancers_list = [d.get("name") for d in data["dancers"]]
+            
+        rows.append({
+            "id": vid_id,
+            "title": data.get("title", "Untitled"),
+            "orchestra": orchestra or "Unknown",
+            "event": event or "Unknown",
+            "year": data.get("event", {}).get("year"),
+            "videographer": data.get("videographer", "Unknown"),
+            "dancers": ", ".join(dancers_list),
+            "url": data.get("url"),
+            "duration": data.get("duration", 0)
+        })
+    
+    if not rows:
+        return pd.DataFrame()
+        
+    return pd.DataFrame(rows)
 
 
 data = load_data()
@@ -198,7 +281,7 @@ def show_dancer_details(dancer_name):
 st.markdown("### 🇦🇷 TangoGraph")
 
 # Top-level Tabs
-tab_atlas, tab_dashboard = st.tabs(["Style Atlas", "Dashboard"])
+tab_atlas, tab_library, tab_dashboard = st.tabs(["Style Atlas", "Video Library", "Dashboard"])
 
 # --- TAB 1: STYLE ATLAS ---
 with tab_atlas:
@@ -325,7 +408,53 @@ with tab_atlas:
         if st.session_state.get("show_modal", False) and active_dancer:
             show_dancer_details(active_dancer)
 
-# --- TAB 2: DASHBOARD ---
+# --- TAB 2: VIDEO LIBRARY ---
+with tab_library:
+    df_videos = get_library_data(videos)
+    if df_videos.empty:
+        st.info("No videos found yet.")
+    else:
+        # --- Filters ---
+        c_filter1, c_filter2, c_filter3 = st.columns(3)
+        
+        with c_filter1:
+            all_orchestras = sorted([x for x in df_videos['orchestra'].unique() if x != "Unknown"])
+            sel_orch = st.multiselect("Orchestra", options=all_orchestras)
+            
+        with c_filter2:
+            all_events = sorted([x for x in df_videos['event'].unique() if x != "Unknown"])
+            sel_event = st.multiselect("Event", options=all_events)
+            
+        with c_filter3:
+            # Search by dancer name (string contains)
+            search_dancer = st.text_input("Dancer Name", placeholder="e.g. Chicho")
+
+        # --- Apply Filters ---
+        filtered_df = df_videos.copy()
+        if sel_orch:
+            filtered_df = filtered_df[filtered_df['orchestra'].isin(sel_orch)]
+        if sel_event:
+            filtered_df = filtered_df[filtered_df['event'].isin(sel_event)]
+        if search_dancer:
+            filtered_df = filtered_df[filtered_df['dancers'].str.contains(search_dancer, case=False, na=False)]
+            
+        # Limit to 50 to prevent freezing
+        display_df = filtered_df.head(50)
+        
+        st.markdown(f"**Showing {len(display_df)} of {len(filtered_df)} matching videos**")
+        
+        # --- Grid Layout ---
+        # We use columns to create a grid
+        cols = st.columns(3)
+        for idx, row in display_df.iterrows():
+            with cols[idx % 3]:
+                with st.container(border=True):
+                    if row['url']:
+                        st.video(row['url'])
+                    st.markdown(f"**{row['title']}**")
+                    st.caption(f"{row['orchestra']} • {row['event']}")
+
+# --- TAB 3: DASHBOARD ---
 with tab_dashboard:
     st.header("Global Statistics")
     

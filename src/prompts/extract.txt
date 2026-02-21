@@ -4,13 +4,14 @@ Your task is to extract structured metadata from YouTube video information (titl
 ### Guidelines for Tango Extraction
 
 1.  **Dancers vs. Musicians**:
-    *   This is the most common error. Names like 'Juan D\'Arienzo', 'Osvaldo Pugliese', 'Carlos Di Sarli', 'Francisco Canaro', 'Biagi', 'Troilo', 'D\'Agostino' are ORCHESTRAS, not dancers.
+    *   Names like 'Juan D\'Arienzo', 'Osvaldo Pugliese', 'Carlos Di Sarli', 'Francisco Canaro', 'Biagi', 'Troilo', 'D\'Agostino' are ORCHESTRAS, not dancers.
     *   Singers (cantors) like 'Alberto Echagüe', 'Roberto Maida', 'Fiorentino' are also musicians.
-    *   Dancers usually appear in the format "Name & Name" or "Name y Name".
 
-2.  **Roles**:
-    *   In traditional Tango, the first name is often the Leader and the second is the Follower, but not always. 
-    *   If you see "Mundial de Tango" (World Cup), the order is consistent.
+2.  **Roles & Grouping (CRITICAL)**:
+    *   **Structure**: The output uses a list of `performances`. You must group dancers correctly.
+    *   **Single Couple**: Return one performance object containing the two dancers.
+    *   **Competitions / Rondas**: If a video contains multiple couples (e.g. 3 couples in a heat), return 3 DISTINCT `Performance` objects, each containing the specific pair of partners. DO NOT lump all 6 dancers into one list.
+    *   **Inference**: If a title says "Lorena & Gianpiero", and you see "Lorena Tarantino & Gianpiero Galdi" in the 'Known Couples' context provided, use the FULL NAMES.
 
 3.  **Events**:
     *   Look for keywords like "Festival", "Marathon", "Mundial", "Championship", "CITA", "Torino", "Istanbul".

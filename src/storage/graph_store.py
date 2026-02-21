@@ -15,7 +15,7 @@ class GraphStore:
     def __init__(self, db_file: str = "graph_db.json"):
         self.db_file = db_file
         # Maps video_id -> VideoContent dict
-        self.videos: Dict[str, Dict] = {} 
+        self.videos: Dict[str, Dict] = {}
         # Maps dancer_name -> { 
         #   "videos": [id], 
         #   "partners": {name: count}, 
@@ -32,6 +32,21 @@ class GraphStore:
         if video_id in self.videos:
             return
 
+        # 0. Disambiguate Dancers based on Partnerships in this video
+        # We attempt to resolve short names (e.g. "Lorena") to full names ("Lorena Tarantino")
+        # by checking if the specific pair exists in our graph history.
+        for p in content.performances:
+            if len(p.dancers) == 2:
+                d1, d2 = p.dancers[0], p.dancers[1]
+                new_n1, new_n2 = self.infer_partnership(d1.name, d2.name)
+                
+                if new_n1 != d1.name:
+                    logger.debug(f"Inferred: {d1.name} -> {new_n1} (via partner {d2.name})")
+                    d1.name = new_n1
+                if new_n2 != d2.name:
+                    logger.debug(f"Inferred: {d2.name} -> {new_n2} (via partner {d1.name})")
+                    d2.name = new_n2
+
         # Store video metadata
         data = content.model_dump()
         data['title'] = title
@@ -42,12 +57,23 @@ class GraphStore:
         
         self.videos[video_id] = data
 
-        # Update Dancer Graph
-        dancer_names = [d.name for d in content.dancers]
+        # Index the video into the dancer graph
+        self._index_video(video_id, content, tags)
+        self.save()
+
+    def _index_video(self, video_id: str, content: VideoContent, tags: List[str]):
+        """
+        Helper to update self.dancers from a video record.
+        Used by add_video and normalize_graph.
+        """
         event_name = content.event.name if content.event else None
         
-        # Register dancers and update basic stats
-        for dancer in content.dancers:
+        # 1. Gather all dancers for global stats (Appearance in Video / Event)
+        all_dancers_in_video = []
+        for p in content.performances:
+            all_dancers_in_video.extend(p.dancers)
+            
+        for dancer in all_dancers_in_video:
             if dancer.name not in self.dancers:
                 self.dancers[dancer.name] = {
                     "videos": [], 
@@ -59,15 +85,12 @@ class GraphStore:
                 }
             
             entry = self.dancers[dancer.name]
-            entry["videos"].append(video_id)
+            if video_id not in entry["videos"]:
+                entry["videos"].append(video_id)
+            
             if dancer.role:
                 entry["roles"].add(dancer.role)
 
-            # Update partners
-            for partner_name in dancer_names:
-                if partner_name != dancer.name:
-                    entry["partners"][partner_name] = entry["partners"].get(partner_name, 0) + 1
-            
             # Update Event Attendance
             if event_name:
                 entry["events"][event_name] = entry["events"].get(event_name, 0) + 1
@@ -78,13 +101,147 @@ class GraphStore:
                     clean_tag = tag.lower().strip()
                     entry["tags"][clean_tag] = entry["tags"].get(clean_tag, 0) + 1
 
+        # 2. Update Partnerships (Scoped to Performance Unit)
+        for p in content.performances:
+            p_names = [d.name for d in p.dancers]
+            if len(p_names) < 2:
+                continue
+                
+            for d_obj in p.dancers:
+                entry = self.dancers[d_obj.name]
+                for partner_name in p_names:
+                    if partner_name == d_obj.name:
+                        continue
+                    entry["partners"][partner_name] = entry["partners"].get(partner_name, 0) + 1
+
+    def normalize_graph(self):
+        """
+        Maintenance routine to:
+        1. Migrate legacy schema (flat dancers -> performances)
+        2. Retroactively apply partnership inference to old videos
+        3. Rebuild the dancer index from scratch to ensure consistency
+        """
+        logger.info("--- Running Graph Normalization ---")
+        updates_count = 0
+        
+        # 1. Iterate all videos to fix Schema & Disambiguate
+        for vid_id, data in self.videos.items():
+            # Load into Pydantic to access validator logic (auto-migration)
+            try:
+                content = VideoContent(**data)
+            except Exception as e:
+                logger.warning(f"Skipping malformed video {vid_id}: {e}")
+                continue
+            
+            changed = False
+
+            # A. Schema Migration is handled by Pydantic model_validator on load
+            # We just need to check if we need to write it back. 
+            # If original data had 'dancers' but no 'performances', Pydantic fixed it in 'content'.
+            if "dancers" in data and not data.get("performances"):
+                changed = True
+
+            # B. Disambiguation (Retroactive)
+            for p in content.performances:
+                if len(p.dancers) == 2:
+                    d1, d2 = p.dancers[0], p.dancers[1]
+                    # Try to infer better names using the CURRENT graph state
+                    # (Note: This uses the existing self.dancers index before we rebuild it)
+                    new_n1, new_n2 = self.infer_partnership(d1.name, d2.name)
+                    
+                    if new_n1 != d1.name:
+                        d1.name = new_n1
+                        changed = True
+                    if new_n2 != d2.name:
+                        d2.name = new_n2
+                        changed = True
+            
+            if changed:
+                updates_count += 1
+                # Merge back into the raw dict
+                dumped = content.model_dump()
+                data.update(dumped)
+                # Remove legacy key if it exists to keep DB clean
+                if "dancers" in data and "performances" in data:
+                    data.pop("dancers", None)
+
+        logger.info(f"Normalized {updates_count} videos.")
+
+        # 2. Rebuild Dancer Index from scratch
+        # This ensures all counts/partnerships are clean after name changes
+        self.dancers = {}
+        for vid_id, data in self.videos.items():
+            try:
+                content = VideoContent(**data)
+                tags = data.get("tags", [])
+                self._index_video(vid_id, content, tags)
+            except Exception as e:
+                logger.error(f"Failed to re-index video {vid_id}: {e}")
+        
         self.save()
+        logger.info("Graph Normalization Complete.")
 
     def get_stats(self):
         return {
             "total_videos": len(self.videos),
             "total_dancers": len(self.dancers)
         }
+
+    def infer_partnership(self, name_a: str, name_b: str) -> tuple[str, str]:
+        """
+        Attempts to resolve full names for a pair of dancers by checking 
+        if any known partnership in the graph matches the provided names.
+        """
+        # Helper to find candidates in the DB
+        def get_candidates(query_name):
+            query_norm = query_name.lower().strip()
+            candidates = []
+            for known_name in self.dancers.keys():
+                # Exact match
+                if query_norm == known_name.lower():
+                    return [known_name] # Found exact, stop looking
+                
+                # Token match (e.g. 'Lorena' in 'Lorena Tarantino')
+                # We require the query to be a significant prefix or word match
+                known_norm = known_name.lower()
+                known_parts = known_norm.split()
+                if query_norm in known_parts:
+                    candidates.append(known_name)
+            return candidates
+
+        cands_a = get_candidates(name_a)
+        cands_b = get_candidates(name_b)
+
+        # If no candidates found for either, we can't infer anything -> return originals
+        if not cands_a and not cands_b:
+            return name_a, name_b
+
+        # If one has no candidates, assume the extracted name is a new/unknown dancer
+        if not cands_a: cands_a = [name_a]
+        if not cands_b: cands_b = [name_b]
+
+        best_score = 0
+        best_pair = (name_a, name_b)
+
+        for ca in cands_a:
+            data_a = self.dancers.get(ca)
+            if not data_a: continue
+            
+            partners_a = data_a.get("partners", {})
+            
+            for cb in cands_b:
+                # Check if they have danced together
+                if cb in partners_a:
+                    score = partners_a[cb]
+                    if score > best_score:
+                        best_score = score
+                        best_pair = (ca, cb)
+        
+        # Only update if we found a known link (score > 0)
+        if best_score > 0:
+            return best_pair
+            
+        return name_a, name_b
 
     def get_dancer_profile(self, name: str) -> Optional[Dict]:
         if name not in self.dancers:

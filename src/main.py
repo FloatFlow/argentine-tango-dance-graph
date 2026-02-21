@@ -77,11 +77,12 @@ async def process_video(
 
         # 3.5 Canonicalize Entities
         # Resolve dancer names against known aliases
-        for dancer in content.dancers:
-            original_name = dancer.name
-            dancer.name = resolver.resolve_dancer(original_name)
-            if dancer.name != original_name:
-                logger.debug(f"Normalized: '{original_name}' -> '{dancer.name}'")
+        for performance in content.performances:
+            for dancer in performance.dancers:
+                original_name = dancer.name
+                dancer.name = resolver.resolve_dancer(original_name)
+                if dancer.name != original_name:
+                    logger.debug(f"Normalized: '{original_name}' -> '{dancer.name}'")
         
         # Resolve Event
         if content.event and content.event.name:
@@ -100,7 +101,7 @@ async def process_video(
 
         # 5. Feed the Flywheel
         # Only add new queries if we successfully extracted meaningful data
-        if content.dancers:
+        if content.performances:
             for query in content.suggested_search_queries:
                 queue_manager.add_query(query)
 
@@ -116,6 +117,10 @@ async def run_maintenance(graph_store: GraphStore, resolver: EntityResolver, llm
     Periodically runs deduplication on all entities found in the graph.
     """
     logger.info("--- Running Graph Maintenance ---")
+    
+    # 0. Graph Normalization (Schema Migration & Contextual Disambiguation)
+    # This runs before deduplication to ensure we have the best possible names from context
+    graph_store.normalize_graph()
     
     # 1. Deduplicate Dancers (Includes graph merging)
     dancer_names = list(graph_store.dancers.keys())
