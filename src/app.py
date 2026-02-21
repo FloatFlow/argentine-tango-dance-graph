@@ -130,7 +130,7 @@ def get_atlas_data(dancers_data):
     # 3. Clustering
     if len(df) > 10:
         # Adjusted parameters for potentially denser merged points
-        hdb = HDBSCAN(min_cluster_size=4, min_samples=2)
+        hdb = HDBSCAN(min_cluster_size=5, min_samples=3)
         df['cluster'] = hdb.fit_predict(df[['x', 'y']])
         df['cluster'] = df['cluster'].astype(str)
     else:
@@ -173,7 +173,7 @@ def get_library_data(videos_data):
             "title": data.get("title", "Untitled"),
             "orchestra": orchestra or "Unknown",
             "event": event or "Unknown",
-            "year": data.get("event", {}).get("year"),
+            "year": (data.get("event") or {}).get("year"),
             "videographer": data.get("videographer", "Unknown"),
             "dancers": ", ".join(dancers_list),
             "url": data.get("url"),
