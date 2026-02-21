@@ -28,6 +28,14 @@ async def process_video(
 ):
     video_id = video_data['id']
     title = video_data.get('title', '')
+
+    # Filter out strict Amateur categories to focus on Professional/Pro-Am content
+    # We allow "Pro-Am" but skip standalone "Amateur"
+    if "amateur" in title.lower() and "pro-am" not in title.lower():
+        logger.info(f"Skipping Amateur video: {title}")
+        # Mark as seen so we don't re-process it in future searches
+        queue_manager.mark_video_seen(video_id)
+        return
     
     # Check if already processed
     if queue_manager.is_video_seen(video_id):
@@ -138,6 +146,16 @@ async def run_maintenance(graph_store: GraphStore, resolver: EntityResolver, llm
 
 @gin.configurable
 async def main(video_delay: int = 5, query_delay: int = 10):
+    # DEBUG: Verify Environment / Auth State
+    project_id = os.environ.get("VERTEX_PROJECT_ID")
+    api_key = os.environ.get("GOOGLE_API_KEY")
+    creds = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+    
+    logger.info(f"--- Runtime Auth Debug ---")
+    logger.info(f"VERTEX_PROJECT_ID: {project_id}")
+    logger.info(f"GOOGLE_API_KEY: {'[PRESENT]' if api_key else '[MISSING]'}")
+    logger.info(f"GOOGLE_APPLICATION_CREDENTIALS: {creds}")
+    
     # Initialize components
     tube_client = TubeClient()
     queue_manager = QueueManager()

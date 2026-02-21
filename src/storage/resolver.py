@@ -6,7 +6,15 @@ from typing import Dict, List, Set
 from difflib import SequenceMatcher
 from loguru import logger
 import gin
+from pydantic import BaseModel
 from src.core.llm_client import Rhizosphere
+
+class ResolutionItem(BaseModel):
+    original: str
+    canonical: str
+
+class ResolutionList(BaseModel):
+    resolutions: List[ResolutionItem]
 
 @gin.configurable
 class EntityResolver:
@@ -14,8 +22,9 @@ class EntityResolver:
     Handles entity deduplication and canonicalization via String Clustering + LLM Verification.
     Supports multiple entity types (dancers, events, videographers).
     """
-    def __init__(self, alias_file: str = "aliases.json"):
+    def __init__(self, alias_file: str = "aliases.json", model_id: str = "gpt-4o"):
         self.alias_file = alias_file
+        self.model_id = model_id
         # map entity_type -> { normalized_alias -> canonical_name }
         self.aliases: Dict[str, Dict[str, str]] = {
             "dancers": {},
@@ -96,17 +105,20 @@ class EntityResolver:
                 continue
                 
             try:
-                # We ask the LLM to return a Dict[str, str] map
+                # We ask the LLM to return a ResolutionList
                 response = await llm_client.structured_call(
                     chat_history=[{"role": "user", "content": f"Input: {json.dumps(cluster)}"}],
                     system_prompt=system_prompt,
-                    model_id="gpt-4o",
+                    model_id=self.model_id,
                     model_kwargs={"temperature": 0.0},
-                    pydantic_obj=Dict[str, str]
+                    pydantic_obj=ResolutionList
                 )
                 
                 # 4. Apply Updates
-                for variant, canonical in response.items():
+                for item in response.resolutions:
+                    variant = item.original
+                    canonical = item.canonical
+                    
                     if variant != canonical:
                         self.add_alias(variant, canonical, entity_type)
                         logger.info(f"Resolved {entity_type}: '{variant}' -> '{canonical}'")
@@ -114,6 +126,9 @@ class EntityResolver:
                         # 5. Retroactive Merge (Specific logic per type if needed)
                         if graph_store and entity_type == "dancers":
                             graph_store.merge_dancers(variant, canonical)
+                
+                # Rate limit protection for batch processing
+                await asyncio.sleep(0.5)
                         
             except Exception as e:
                 logger.error(f"Failed to resolve cluster {cluster}: {e}")

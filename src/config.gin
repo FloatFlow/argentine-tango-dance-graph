@@ -18,6 +18,9 @@ src.storage.resolver.EntityResolver.alias_file = "aliases.json"
 # The model used for the main extraction loop
 src.main.process_video.model_id = "gemini-3-flash-preview"
 
+# The model used for entity deduplication (Resolver)
+src.storage.resolver.EntityResolver.model_id = "gemini-3-flash-preview"
+
 # Default settings for the LLM Client
 src.core.llm_client.Rhizosphere.model_id = "gemini-3-flash-preview"
 src.core.llm_client.Rhizosphere.model_kwargs = {
@@ -25,6 +28,6 @@ src.core.llm_client.Rhizosphere.model_kwargs = {
 }
 # --- Rate Limiting ---
 # Seconds to wait between processing individual videos
-src.main.main.video_delay = 5
+src.main.main.video_delay = 10
 # Seconds to wait between search queries
 src.main.main.query_delay = 10

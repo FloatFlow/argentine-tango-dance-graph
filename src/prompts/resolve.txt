@@ -1,5 +1,5 @@
 You are a data cleaning expert for an Argentine Tango database.
-Your task is to deduplicate and canonicalize a list of {entity_type} names that have been clustered by string similarity.
+Your task is to deduplicate and canonicalize a list of {{entity_type}} names that have been clustered by string similarity.
 
 ### Input
 A list of names (strings) that are likely variations of the same entity, or distinct entities with similar names.
@@ -14,14 +14,16 @@ A list of names (strings) that are likely variations of the same entity, or dist
 3.  **Typos**: Fix obvious spelling errors.
 
 ### Output
-Return a JSON object where the keys are the input names and the values are the resolved Canonical Name.
+Return a JSON object with a single key "resolutions" containing a list of objects. Each object must have "original" and "canonical" fields.
 If a name is already correct, map it to itself.
 
 ### Example
 Input: ["Chicho", "Mariano Frumboli", "M. Chicho Frumboli"]
 Output: 
 {
-    "Chicho": "Mariano 'Chicho' Frumboli",
-    "Mariano Frumboli": "Mariano 'Chicho' Frumboli",
-    "M. Chicho Frumboli": "Mariano 'Chicho' Frumboli"
+    "resolutions": [
+        { "original": "Chicho", "canonical": "Mariano 'Chicho' Frumboli" },
+        { "original": "Mariano Frumboli", "canonical": "Mariano 'Chicho' Frumboli" },
+        { "original": "M. Chicho Frumboli", "canonical": "Mariano 'Chicho' Frumboli" }
+    ]
 }

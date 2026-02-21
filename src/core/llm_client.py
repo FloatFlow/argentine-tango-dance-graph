@@ -6,7 +6,7 @@ import base64
 from typing import AsyncGenerator, List, Tuple, Dict, Any, Literal, Optional
 import traceback
 from loguru import logger
-from tenacity import retry, stop_after_attempt, wait_fixed
+from tenacity import retry, stop_after_attempt, wait_fixed, wait_random_exponential, RetryError
 
 import gin
 #from aiobotocore.session import get_session
@@ -74,6 +74,32 @@ class Rhizosphere:
         self.model_kwargs = model_kwargs
         self.api_type = api_type
         self.add_system_prompt_to_history = add_system_prompt_to_history
+        self._gemini_client = None
+
+    def _get_gemini_client(self):
+        if self._gemini_client:
+            return self._gemini_client
+
+        vertex_project = os.environ.get("VERTEX_PROJECT_ID")
+        vertex_location = os.environ.get("VERTEX_LOCATION", "us-central1")
+
+        if vertex_project:
+            # Vertex AI Mode
+            # We do NOT force 'v1' here because 'gemini-3-flash-preview' requires the Beta endpoint.
+            logger.info(f"Initializing Gemini Client in Vertex AI Mode (Project: {vertex_project}, Location: {vertex_location})")
+            self._gemini_client = genai.Client(
+                vertexai=True,
+                project=vertex_project,
+                location=vertex_location
+            )
+        else:
+            # AI Studio Mode
+            logger.info("Initializing Gemini Client in AI Studio Mode")
+            self._gemini_client = genai.Client(
+                api_key=os.environ.get("GOOGLE_API_KEY")
+            )
+        
+        return self._gemini_client
 
     def _parse_claude_event(self, chunk: Dict[str, Any]) -> str:
         if self.api_type == "messages":
@@ -101,7 +127,8 @@ class Rhizosphere:
             combined.update(overrides)
         return combined
 
-    @retry(stop=stop_after_attempt(3), wait=wait_fixed(1))
+    # Restoring retry with tighter wait (2 seconds fixed) as requested
+    @retry(stop=stop_after_attempt(5), wait=wait_fixed(2))
     async def stream_call(
         self,
         chat_history: List[Dict[str, str]],
@@ -116,10 +143,8 @@ class Rhizosphere:
         if "gpt" in model_id:
 
             try:
-                #print("Sending Generate Request to OpenAI")
                 client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
                 messages = [{'role': 'system', 'content': system_prompt}] + chat_history
-                # a ChatCompletion request
                 response = await client.chat.completions.create(
                     model=model_id,
                     messages=messages,
@@ -128,7 +153,6 @@ class Rhizosphere:
                 )
                 content_yielded = False
                 async for chunk in response:
-                    #print(f"{chunk = }")
                     if chunk.choices and chunk.choices[0].delta.content:
                         content_yielded = True
                         yield chunk.choices[0].delta.content
@@ -141,27 +165,34 @@ class Rhizosphere:
                 raise
 
         elif "gemini" in model_id:
-            client = genai.client.AsyncClient(
-                api_client=genai._api_client.BaseApiClient(api_key=os.environ["GOOGLE_API_KEY"])
-            )
+            client = self._get_gemini_client()
             self._configure_gemini_thinking(final_kwargs)
 
-
-            google_history = convert_history_to_gemini(chat_history)
+            converted_convo = convert_history_to_gemini(chat_history)
             content_yielded = False
-            async for chunk in await client.models.generate_content_stream(
-                model=model_id,
-                contents=google_history,
-                config=types.GenerateContentConfig(
-                    system_instruction=system_prompt,
-                    **final_kwargs
-                )
-            ):
-                if hasattr(chunk, "finish_reason"):
-                    break
-                if hasattr(chunk, "text") and chunk.text is not None:
-                    content_yielded = True
-                    yield chunk.text
+            
+            try:
+                async for chunk in await client.aio.models.generate_content_stream(
+                    model=model_id,
+                    contents=converted_convo,
+                    config=types.GenerateContentConfig(
+                        system_instruction=system_prompt,
+                        **final_kwargs
+                    )
+                ):
+                    if hasattr(chunk, "finish_reason"):
+                        break
+                    if hasattr(chunk, "text") and chunk.text is not None:
+                        content_yielded = True
+                        yield chunk.text
+            except RetryError as re:
+                # Unwrap SDK retry error to see real cause
+                cause = re.last_attempt.exception()
+                logger.error(f"Gemini Stream RetryError Caused By: {type(cause).__name__} - {cause}")
+                raise cause
+            except Exception as e:
+                logger.error(f"Gemini Stream Error: {type(e).__name__} - {e}")
+                raise e
 
             if not content_yielded:
                 raise ValueError("Gemini stream call returned no content.")
@@ -171,7 +202,8 @@ class Rhizosphere:
                 f"{self.model_id} is not a recognized or supported model."
             )
 
-    @retry(stop=stop_after_attempt(3), wait=wait_fixed(1))
+    # Restoring retry with tighter wait (2 seconds fixed)
+    @retry(stop=stop_after_attempt(5), wait=wait_fixed(2))
     async def structured_call(
         self,
         chat_history: List[Dict[str, str]],
@@ -201,22 +233,35 @@ class Rhizosphere:
 
         elif "gemini" in model_id:
             self._configure_gemini_thinking(final_kwargs)
-            client = genai.client.AsyncClient(
-                api_client=genai._api_client.BaseApiClient(api_key=os.environ["GOOGLE_API_KEY"])
-            )
+            client = self._get_gemini_client()
 
             converted_convo = convert_history_to_gemini(chat_history)
-            # logger.debug(converted_convo)
-            response = await client.models.generate_content(
-                model=model_id,
-                contents=converted_convo,
-                config=types.GenerateContentConfig(
-                    system_instruction=system_prompt,
-                    response_mime_type="application/json",
-                    response_schema=pydantic_obj,
-                    **final_kwargs
-                ),
-            )
+            
+            # DEBUG: Log payload size to check for massive context
+            payload_preview = json.dumps(chat_history)[:500]
+            logger.info(f"Sending Gemini Request: {model_id} | History Count: {len(chat_history)} | System Prompt Len: {len(system_prompt)}")
+            logger.debug(f"Payload Preview: {payload_preview}...")
+
+            try:
+                response = await client.aio.models.generate_content(
+                    model=model_id,
+                    contents=converted_convo,
+                    config=types.GenerateContentConfig(
+                        system_instruction=system_prompt,
+                        response_mime_type="application/json",
+                        response_schema=pydantic_obj,
+                        **final_kwargs
+                    ),
+                )
+            except RetryError as re:
+                # CRITICAL: Unwrap the Tenacity error from the Google SDK if present
+                cause = re.last_attempt.exception()
+                logger.error(f"Gemini SDK RetryError: {type(cause).__name__} - {cause}")
+                raise cause
+            except Exception as e:
+                logger.error(f"Gemini API Error (RAW): {type(e).__name__} - {str(e)}")
+                raise e
+
             # logger.debug(f"{response.usage_metadata = }")
             parsed_response = response.parsed
             if parsed_response is None:
@@ -240,8 +285,8 @@ class Rhizosphere:
         Includes manual retry logic for connection errors (e.g., 503) only if no data has been sent yet.
         """
         final_kwargs = self._merge_kwargs(model_kwargs)
-        max_retries = 3
-        retry_delay = 1
+        max_retries = 3 # Increased back to 3
+        retry_delay = 2 # Fixed tight delay
 
         for attempt in range(max_retries):
             has_yielded = False
@@ -291,13 +336,11 @@ class Rhizosphere:
 
                 elif "gemini" in model_id:
                     self._configure_gemini_thinking(final_kwargs)
-                    client = genai.client.AsyncClient(
-                        api_client=genai._api_client.BaseApiClient(api_key=os.environ["GOOGLE_API_KEY"])
-                    )
+                    client = self._get_gemini_client()
 
                     converted_convo = convert_history_to_gemini(chat_history)
 
-                    response_stream = await client.models.generate_content_stream(
+                    response_stream = await client.aio.models.generate_content_stream(
                         model=model_id,
                         contents=converted_convo,
                         config=types.GenerateContentConfig(
@@ -385,13 +428,11 @@ class Rhizosphere:
             return 0
         elif "gemini" in model_id:
             try:
-                client = genai.client.AsyncClient(
-                    api_client=genai._api_client.BaseApiClient(api_key=os.environ["GOOGLE_API_KEY"])
-                )
+                client = self._get_gemini_client()
 
                 converted_history = convert_history_to_gemini(chat_history)
 
-                response = await client.models.count_tokens(
+                response = await client.aio.models.count_tokens(
                     model=model_id,
                     contents=converted_history,
                     config=types.GenerateContentConfig(

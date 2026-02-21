@@ -4,8 +4,6 @@ import os
 from collections import Counter
 import pandas as pd
 import plotly.express as px
-from sklearn.decomposition import PCA
-from sklearn.preprocessing import StandardScaler
 
 # Page Config
 st.set_page_config(
@@ -40,36 +38,8 @@ def format_duration(seconds):
     m, s = divmod(int(seconds), 60)
     return f"{m}:{s:02d}"
 
-def get_similar_dancers(target_name, dancers_db):
-    """Re-implements the Jaccard logic for the frontend"""
-    if target_name not in dancers_db:
-        return []
-    
-    target_info = dancers_db[target_name]
-    # Handle case where partners might be empty or old format
-    target_partners = set(target_info.get("partners", {}).keys())
-    
-    scores = []
-    
-    for other_name, info in dancers_db.items():
-        if other_name == target_name:
-            continue
-        
-        other_partners = set(info.get("partners", {}).keys())
-        
-        intersection = len(target_partners.intersection(other_partners))
-        union = len(target_partners.union(other_partners))
-        
-        if union > 0:
-            score = intersection / union
-            if score > 0.1:
-                scores.append((other_name, score))
-    
-    # Sort by score descending
-    return sorted(scores, key=lambda x: x[1], reverse=True)[:5]
-
 # --- Sidebar ---
-st.sidebar.title="🇦🇷 Tango Explorer"
+st.sidebar.title("🇦🇷 Tango Explorer")
 st.sidebar.markdown("Browse the semantic graph of Argentine Tango videos.")
 
 mode = st.sidebar.radio("Mode", ["Dashboard", "Dancer Explorer", "Style Atlas", "Video Browser"])
@@ -138,11 +108,13 @@ elif mode == "Dancer Explorer":
         
         # Similar Dancers
         st.subheader("Similar Style / Network")
-        similar = get_similar_dancers(selected_dancer, dancers)
+        similar = info.get("similar_dancers", [])
         if similar:
             cols = st.columns(5)
-            for idx, (name, score) in enumerate(similar):
+            for idx, item in enumerate(similar):
                 if idx < 5:
+                    name = item.get("name")
+                    score = item.get("score", 0)
                     cols[idx].caption(f"Match: {score:.2f}")
                     if cols[idx].button(name, key=f"sim_{name}"):
                         # Update state and rerun to 'jump' to the new dancer
