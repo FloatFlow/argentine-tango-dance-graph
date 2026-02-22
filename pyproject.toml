@@ -6,7 +6,7 @@ authors = [
     {name = "Wolfgang Rahfeldt",email = "wolfrahfeldt@gmail.com"}
 ]
 readme = "README.md"
-requires-python = ">=3.11,<4.0"
+requires-python = ">=3.11,<3.14"
 dependencies = [
     "yt-dlp (>=2026.2.4,<2027.0.0)",
     "loguru (>=0.7.3,<0.8.0)",
@@ -20,6 +20,9 @@ dependencies = [
     "scikit-learn (>=1.8.0,<2.0.0)",
     "plotly (>=6.5.2,<7.0.0)",
     "hdbscan (>=0.8.41,<0.9.0)",
+    "seaborn (>=0.13.2,<0.14.0)",
+    "networkx (>=3.6.1,<4.0.0)",
+    "scipy (>=1.17.0,<2.0.0)",
 ]
 
 

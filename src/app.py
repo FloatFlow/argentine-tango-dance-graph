@@ -6,6 +6,9 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 from sklearn.cluster import HDBSCAN
+import seaborn as sns
+import networkx as nx
+from scipy.spatial import Delaunay
 
 # Page Config
 st.set_page_config(
@@ -73,6 +76,7 @@ def get_atlas_data(dancers_data):
     """
     Pre-computes the dataframe and clustering to avoid delays on interaction.
     Merges dancers with identical coordinates into a single 'Couple' point.
+    Returns (DataFrame, color_map_dict)
     """
     # 1. Group by Coordinates to handle overlaps
     grouped_points = {}
@@ -123,23 +127,79 @@ def get_atlas_data(dancers_data):
             })
     
     if not plot_data:
-        return pd.DataFrame()
+        return pd.DataFrame(), {}
 
     df = pd.DataFrame(plot_data)
 
-    # 3. Clustering
+    # 3. Clustering & Coloring
+    # Use default palette to get the specific gray for outliers
+    default_palette = sns.color_palette().as_hex()
+    outlier_color = default_palette[7] # Gray
+    
+    color_map = {'-1': outlier_color}
+    
     if len(df) > 10:
-        # Adjusted parameters for potentially denser merged points
-        hdb = HDBSCAN(min_cluster_size=5, min_samples=3)
+        # Low min_samples to respect user preference/data density
+        hdb = HDBSCAN(min_cluster_size=4, min_samples=2)
         df['cluster'] = hdb.fit_predict(df[['x', 'y']])
         df['cluster'] = df['cluster'].astype(str)
+        
+        # --- Coloring Strategy: Golden Angle ---
+        # Goal: Unique color per cluster, high contrast neighbors, "solid" look.
+        unique_clusters = sorted([c for c in df['cluster'].unique() if c != '-1'])
+        n_clusters = len(unique_clusters)
+        
+        if n_clusters > 0:
+            # 1. Sort clusters spatially (by X coordinate of centroid)
+            # This ensures that as we iterate through the color sequence, 
+            # we are assigning them to clusters that are spatially related.
+            cluster_centroids = []
+            for c in unique_clusters:
+                centroid_x = df.loc[df['cluster'] == c, 'x'].mean()
+                cluster_centroids.append((c, centroid_x))
+            
+            # Sort by X
+            cluster_centroids.sort(key=lambda x: x[1])
+            sorted_labels = [x[0] for x in cluster_centroids]
+            
+            # 2. Generate N distinct colors using Golden Angle approximation
+            # This mathematically ensures that consecutive indices have distinct hues.
+            import colorsys
+            import matplotlib.colors
+            
+            golden_ratio_conjugate = 0.618033988749895
+            palette = []
+            
+            for i in range(n_clusters):
+                # Hue calculation
+                h = (0.0 + i * golden_ratio_conjugate) % 1.0
+                
+                # Alternating Lightness/Saturation to mimic tab20's contrast
+                # Even indices: Darker/Richer (Anchor points)
+                # Odd indices: Lighter/Softer (Contrast points)
+                if i % 2 == 0:
+                    l = 0.45
+                    s = 0.85
+                else:
+                    l = 0.65
+                    s = 0.75
+                
+                rgb = colorsys.hls_to_rgb(h, l, s)
+                hex_color = matplotlib.colors.to_hex(rgb)
+                palette.append(hex_color)
+            
+            # 3. Assign 1-to-1
+            for i, label in enumerate(sorted_labels):
+                color_map[label] = palette[i]
+            
     else:
         df['cluster'] = "0"
+        color_map['0'] = default_palette[0]
 
     # 4. Sizing
     df['size_log'] = np.log1p(df['videos']) * 8 
     
-    return df
+    return df, color_map
 
 
 @st.cache_data
@@ -286,7 +346,7 @@ tab_atlas, tab_library, tab_dashboard = st.tabs(["Style Atlas", "Video Library",
 # --- TAB 1: STYLE ATLAS ---
 with tab_atlas:
     # Optimized Data Loading
-    df = get_atlas_data(dancers)
+    df, color_map = get_atlas_data(dancers)
     
     if df.empty:
         st.warning("No style embeddings found. Wait for the maintenance cycle to run.")
@@ -310,8 +370,6 @@ with tab_atlas:
         # Highlighting logic for the chart
         df['status'] = df['name'].apply(lambda x: 'Selected' if x == active_dancer else 'Normal')
         df['final_size'] = df.apply(lambda row: 30 if row['name'] == active_dancer else row['size_log'], axis=1)
-        df['border_width'] = df['name'].apply(lambda x: 3 if x == active_dancer else 0)
-        df['border_color'] = df['name'].apply(lambda x: 'Red' if x == active_dancer else 'DarkSlateGrey')
         
         # Sort so selected is on top
         df = df.sort_values(by='status', ascending=True)
@@ -323,6 +381,7 @@ with tab_atlas:
             text='name', 
             size='final_size', 
             color='cluster', 
+            color_discrete_map=color_map,
             hover_data=['name', 'videos'],
             # Fixed height to fit standard laptop screens without scrolling
             height=650,
@@ -332,13 +391,12 @@ with tab_atlas:
         
         # Text Styling: Small font, only visible if space allows (Plotly default behavior)
         fig.update_traces(
-            textposition='top center',
+            textposition='top center', 
             textfont=dict(size=10, color='rgba(200,200,200,0.9)'),
             marker=dict(opacity=0.8, line=dict(width=0)) # Default clean look
         )
         
         # Explicitly highlight the selected point using a separate trace
-        # This overcomes the issue where 'update_traces' fails to map column data across multiple color traces
         if active_dancer:
             selected_row = df[df['name'] == active_dancer]
             if not selected_row.empty:
@@ -367,10 +425,22 @@ with tab_atlas:
             if not target_row.empty:
                 tx = target_row.iloc[0]['x']
                 ty = target_row.iloc[0]['y']
-                # Create a small window around the point
-                zoom_span = 2.0  
-                x_range = [tx - zoom_span, tx + zoom_span]
-                y_range = [ty - zoom_span, ty + zoom_span]
+                
+                # Dynamic Zoom: Viewport = 15% of total data range
+                # We calculate the total spread of the data first
+                total_x = df['x'].max() - df['x'].min()
+                total_y = df['y'].max() - df['y'].min()
+                
+                # The 'radius' (delta) is half of the desired viewport (7.5%)
+                delta_x = total_x * 0.075
+                delta_y = total_y * 0.075
+                
+                # Ensure a minimum sensible zoom if distinct points are few
+                delta_x = max(delta_x, 5.0)
+                delta_y = max(delta_y, 5.0)
+
+                x_range = [tx - delta_x, tx + delta_x]
+                y_range = [ty - delta_y, ty + delta_y]
 
         # Clean Layout
         fig.update_layout(
