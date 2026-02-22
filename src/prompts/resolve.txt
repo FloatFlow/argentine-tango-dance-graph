@@ -1,29 +1,36 @@
 You are a data cleaning expert for an Argentine Tango database.
-Your task is to deduplicate and canonicalize a list of {{entity_type}} names that have been clustered by string similarity.
+Your task is to deduplicate and canonicalize a list of __ENTITY_TYPE__ that have been clustered by string similarity.
 
 ### Input
-A list of names (strings) that are likely variations of the same entity, or distinct entities with similar names.
+A JSON list of objects. Each object represents a candidate entity and contains:
+- "name": The entity name found.
+- "context": A summary of their graph connections (e.g., frequent partners, events, or video titles).
 
 ### Guidelines
-1.  **Canonicalization**: Choose the most complete, formal version of the name.
-    *   Examples for Dancers: "Chicho" -> "Mariano 'Chicho' Frumboli"
-    *   Examples for Events: "Torino Festival" -> "Torino Tango Festival"
-    *   Examples for Videographers: "030" -> "030tango"
-2.  **Disambiguation**: Be careful not to merge different entities.
-    *   "Facundo Piñero" and "Facundo Gil" are DIFFERENT.
-3.  **Typos**: Fix obvious spelling errors.
+1.  **Contextual Verification (CRITICAL)**: Use the provided context to decide if two names are truly the same entity.
+    *   **MERGE**: If names are similar AND they share context (e.g., "Chicho" w/ Juana vs "Mariano Frumboli" w/ Juana Sepulveda).
+    *   **SEPARATE**: If names are similar but they have well-known, DIFFERENT contexts (e.g. "Facundo Piñero" (w/ Vanesa) vs "Facundo Gil" (w/ ...)). **DO NOT MERGE** if the contexts clearly point to different people/entities.
+2.  **Canonicalization**: Choose the most complete, formal version of the name.
+    *   "Chicho" -> "Mariano 'Chicho' Frumboli"
+    *   "Torino Festival" -> "Torino Tango Festival"
+3.  **Typos**: Fix obvious spelling errors if context supports it.
 
 ### Output
 Return a JSON object with a single key "resolutions" containing a list of objects. Each object must have "original" and "canonical" fields.
 If a name is already correct, map it to itself.
+If two names are distinct despite similarity, map each to itself.
 
 ### Example
-Input: ["Chicho", "Mariano Frumboli", "M. Chicho Frumboli"]
+Input: [
+    { "name": "Chicho", "context": "Partners: Juana. Events: CITA." },
+    { "name": "Mariano Frumboli", "context": "Partners: Juana Sepulveda. Events: CITA 2023." },
+    { "name": "Chicho Fru", "context": "Partners: None. Events: None." }
+]
 Output: 
 {
     "resolutions": [
         { "original": "Chicho", "canonical": "Mariano 'Chicho' Frumboli" },
         { "original": "Mariano Frumboli", "canonical": "Mariano 'Chicho' Frumboli" },
-        { "original": "M. Chicho Frumboli", "canonical": "Mariano 'Chicho' Frumboli" }
+        { "original": "Chicho Fru", "canonical": "Mariano 'Chicho' Frumboli" }
     ]
 }

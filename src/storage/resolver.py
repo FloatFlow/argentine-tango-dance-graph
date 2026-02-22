@@ -70,7 +70,7 @@ class EntityResolver:
         """
         Main maintenance routine. 
         1. Clusters names by string similarity.
-        2. Sends clusters to LLM for resolution.
+        2. Sends clusters to LLM for resolution (Concurrent).
         3. Updates alias DB.
         4. Merges nodes in GraphStore if provided (only for dancers currently).
         """
@@ -94,45 +94,74 @@ class EntityResolver:
             with open("src/prompts/resolve.txt", "r") as f:
                 raw_prompt = f.read()
                 # Inject entity type into prompt
-                system_prompt = raw_prompt.replace("{entity_type}", entity_type)
+                system_prompt = raw_prompt.replace("__ENTITY_TYPE__", entity_type)
         except FileNotFoundError:
             logger.error("Resolve prompt not found.")
             return
 
-        # 3. Process Clusters
-        for cluster in clusters:
-            if len(cluster) < 2:
-                continue
-                
-            try:
-                # We ask the LLM to return a ResolutionList
-                response = await llm_client.structured_call(
-                    chat_history=[{"role": "user", "content": f"Input: {json.dumps(cluster)}"}],
-                    system_prompt=system_prompt,
-                    model_id=self.model_id,
-                    model_kwargs={"temperature": 0.0},
-                    pydantic_obj=ResolutionList
-                )
-                
-                # 4. Apply Updates
-                for item in response.resolutions:
-                    variant = item.original
-                    canonical = item.canonical
-                    
-                    if variant != canonical:
-                        self.add_alias(variant, canonical, entity_type)
-                        logger.info(f"Resolved {entity_type}: '{variant}' -> '{canonical}'")
-                        
-                        # 5. Retroactive Merge (Specific logic per type if needed)
-                        if graph_store and entity_type == "dancers":
-                            graph_store.merge_dancers(variant, canonical)
-                
-                # Rate limit protection for batch processing
-                await asyncio.sleep(0.5)
-                        
-            except Exception as e:
-                logger.error(f"Failed to resolve cluster {cluster}: {e}")
+        # 3. Process Clusters Concurrently
+        # Use a semaphore to prevent hitting LLM rate limits
+        semaphore = asyncio.Semaphore(10)
 
+        async def process_cluster(cluster):
+            async with semaphore:
+                if len(cluster) < 2:
+                    return
+                
+                # Build Rich Context for the LLM
+                cluster_data = []
+                for name in cluster:
+                    context_str = "No context available."
+                    if graph_store and entity_type == "dancers":
+                        profile = graph_store.get_dancer_profile(name)
+                        if profile:
+                            # Extract top partners with counts
+                            partners = sorted(profile.get("partners", {}).items(), key=lambda x: x[1], reverse=True)[:3]
+                            p_str = ", ".join([f"{p[0]} ({p[1]})" for p in partners])
+                            
+                            # Extract top events
+                            events = sorted(profile.get("events", {}).items(), key=lambda x: x[1], reverse=True)[:3]
+                            e_str = ", ".join([e[0] for e in events])
+                            
+                            context_parts = []
+                            if p_str: context_parts.append(f"Partners: {p_str}")
+                            if e_str: context_parts.append(f"Events: {e_str}")
+                            
+                            if context_parts:
+                                context_str = ". ".join(context_parts) + "."
+                    
+                    cluster_data.append({"name": name, "context": context_str})
+                    
+                try:
+                    # We ask the LLM to return a ResolutionList
+                    response = await llm_client.structured_call(
+                        chat_history=[{"role": "user", "content": f"Input: {json.dumps(cluster_data, ensure_ascii=False)}"}],
+                        system_prompt=system_prompt,
+                        model_id=self.model_id,
+                        model_kwargs={"temperature": 0.0},
+                        pydantic_obj=ResolutionList
+                    )
+                    
+                    # 4. Apply Updates
+                    for item in response.resolutions:
+                        variant = item.original
+                        canonical = item.canonical
+                        
+                        if variant != canonical:
+                            self.add_alias(variant, canonical, entity_type)
+                            logger.info(f"Resolved {entity_type}: '{variant}' -> '{canonical}'")
+                            
+                            # 5. Retroactive Merge (Specific logic per type if needed)
+                            if graph_store and entity_type == "dancers":
+                                graph_store.merge_dancers(variant, canonical)
+                            
+                except Exception as e:
+                    logger.error(f"Failed to resolve cluster {cluster}: {e}")
+
+        # Run batches
+        tasks = [process_cluster(c) for c in clusters]
+        if tasks:
+            await asyncio.gather(*tasks)
     def _cluster_names(self, names: List[str], threshold: float = 0.8) -> List[List[str]]:
         """
         Groups a list of strings into clusters based on similarity.

@@ -29,11 +29,6 @@ class VideoContent(BaseModel):
     videographer: Optional[str] = Field(None, description="The name of the videographer or filming channel (e.g. '030tango', 'Gancho', 'Focal Tango').")
     video_type: Literal["performance", "social", "class", "talk", "other"] = Field("performance", description="The context of the video. 'performance' usually implies a stage or cleared floor with an audience.")
     
-    suggested_search_queries: List[str] = Field(
-        default_factory=list, 
-        description="3-5 new search queries derived from this content to find similar videos. Use specific entity names combined with years or festivals (e.g. 'Chicho Frumboli 2024', 'Torino Tango Festival performance')."
-    )
-
     # Legacy support field (hidden from serialization if possible, but used for import)
     dancers_legacy: Optional[List[Dancer]] = Field(None, alias="dancers", description="Deprecated flat list of dancers.")
 

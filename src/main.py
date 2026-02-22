@@ -106,11 +106,8 @@ async def process_video(
         # 5. Feed the Flywheel
         # Only add new queries if we successfully extracted meaningful data
         if content.performances:
-            # A. Exploration (Low Priority): General suggestions from LLM
-            for query in content.suggested_search_queries:
-                queue_manager.add_query(query, priority=10)
+            # A. Exploitation (High Priority): Target newly discovered entities
 
-            # B. Exploitation (High Priority): Target newly discovered entities
             # 1. Dancers
             for p in content.performances:
                 for dancer in p.dancers:
@@ -118,12 +115,20 @@ async def process_video(
                     # Since we just added the video in Step 4, a count of 1 means they are new to the graph
                     if profile and len(profile.get("videos", [])) <= 1:
                         logger.info(f"Exploiting new dancer: {dancer.name}")
-                        queue_manager.add_query(f"{dancer.name} tango performance", priority=5)
+                        await queue_manager.add_query(f"{dancer.name} tango performance", priority=5, llm_client=llm_client)
             
             # 2. Videographers
             if content.videographer:
                 # QueueManager deduplicates, so this only runs once per unique videographer found
-                queue_manager.add_query(f"{content.videographer} tango", priority=5)
+                await queue_manager.add_query(f"{content.videographer} tango", priority=5, llm_client=llm_client)
+
+            # 3. Events (Deterministic Expansion)
+            if content.event and content.event.name:
+                # Base event search (High Priority)
+                await queue_manager.add_query(f"{content.event.name} tango", priority=5, llm_client=llm_client)
+                # Recent history expansion (Lower Priority - ensure freshness)
+                for year in range(2016, 2027):
+                    await queue_manager.add_query(f"{content.event.name} {year}", priority=10, llm_client=llm_client)
 
         # 6. Mark done
         queue_manager.mark_video_seen(video_id)
@@ -211,7 +216,7 @@ async def main(video_delay: int = 5, query_delay: int = 10, search_limit: int = 
             "Carlitos Espinoza tango"
         ]
         for s in seeds:
-            queue_manager.add_query(s, priority=10)
+            await queue_manager.add_query(s, priority=10, llm_client=llm_client)
 
     # Startup Backfill: Ensure we have exploited all known dancers
     # This runs every startup but queue_manager deduplicates against 'seen_queries',
@@ -219,13 +224,13 @@ async def main(video_delay: int = 5, query_delay: int = 10, search_limit: int = 
     logger.info(f"Checking exploitation coverage for {len(graph_store.dancers)} dancers...")
     for name in graph_store.dancers.keys():
         # Priority 5 (High) ensures we prioritize filling out the graph over random exploration
-        queue_manager.add_query(f"{name} tango performance", priority=5)
+        await queue_manager.add_query(f"{name} tango performance", priority=5, llm_client=llm_client)
 
     # Main Loop
     query_counter = 0
     while True:
-        # Run maintenance every 10 queries to keep the graph clean as it grows
-        if query_counter > 0 and query_counter % 10 == 0:
+        # Run maintenance every 50 queries to keep the graph clean as it grows
+        if query_counter > 0 and query_counter % 50 == 0:
             await run_maintenance(graph_store, resolver, llm_client)
 
         query = queue_manager.pop_query()

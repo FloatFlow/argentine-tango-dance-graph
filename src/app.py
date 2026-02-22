@@ -228,6 +228,11 @@ def get_library_data(videos_data):
         elif data.get("dancers"):
             dancers_list = [d.get("name") for d in data["dancers"]]
             
+        # Construct Thumbnail if missing
+        thumb = data.get("thumbnail")
+        if not thumb:
+            thumb = f"https://img.youtube.com/vi/{vid_id}/mqdefault.jpg"
+
         rows.append({
             "id": vid_id,
             "title": data.get("title", "Untitled"),
@@ -237,6 +242,7 @@ def get_library_data(videos_data):
             "videographer": data.get("videographer", "Unknown"),
             "dancers": ", ".join(dancers_list),
             "url": data.get("url"),
+            "thumbnail": thumb,
             "duration": data.get("duration", 0)
         })
     
@@ -275,6 +281,12 @@ def show_search_modal(all_names):
     if selected:
         st.session_state["selected_dancer"] = selected
         st.rerun()
+
+# --- Modal: Watch Video (Performance) ---
+@st.dialog("Now Playing", width="large")
+def watch_video(video_url, title):
+    st.subheader(title)
+    st.video(video_url)
 
 # --- Modal: Dancer Profile ---
 @st.dialog("Dancer Profile", width="large")
@@ -479,6 +491,7 @@ with tab_atlas:
             show_dancer_details(active_dancer)
 
 # --- TAB 2: VIDEO LIBRARY ---
+# --- TAB 2: VIDEO LIBRARY ---
 with tab_library:
     df_videos = get_library_data(videos)
     if df_videos.empty:
@@ -508,22 +521,37 @@ with tab_library:
         if search_dancer:
             filtered_df = filtered_df[filtered_df['dancers'].str.contains(search_dancer, case=False, na=False)]
             
-        # Limit to 50 to prevent freezing
-        display_df = filtered_df.head(50)
+        # --- Pagination Control ---
+        # Initialize limit in session state if not present
+        if "lib_limit" not in st.session_state:
+            st.session_state.lib_limit = 20
+            
+        # Apply Limit
+        display_df = filtered_df.head(st.session_state.lib_limit)
         
         st.markdown(f"**Showing {len(display_df)} of {len(filtered_df)} matching videos**")
         
         # --- Grid Layout ---
         # We use columns to create a grid
-        cols = st.columns(3)
+        cols = st.columns(4) # Tighter grid for thumbnails
         for idx, row in display_df.iterrows():
-            with cols[idx % 3]:
+            with cols[idx % 4]:
                 with st.container(border=True):
-                    if row['url']:
-                        st.video(row['url'])
-                    st.markdown(f"**{row['title']}**")
+                    # Thumbnail Image
+                    st.image(row['thumbnail'], use_container_width=True)
+                    
+                    # Play Button (Triggers Modal)
+                    if st.button(f"▶️ Play", key=f"lib_play_{row['id']}", use_container_width=True):
+                        watch_video(row['url'], row['title'])
+
+                    st.caption(f"**{row['title'][:50]}...**")
                     st.caption(f"{row['orchestra']} • {row['event']}")
 
+        # --- Load More Button ---
+        if len(display_df) < len(filtered_df):
+            if st.button("Load More Videos", use_container_width=True):
+                st.session_state.lib_limit += 20
+                st.rerun()
 # --- TAB 3: DASHBOARD ---
 with tab_dashboard:
     st.header("Global Statistics")

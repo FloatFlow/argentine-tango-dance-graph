@@ -464,3 +464,25 @@ class Rhizosphere:
         ):
             text += token
         return text
+
+    async def get_embedding(
+        self,
+        text: str,
+        model_id: str = "gemini-embedding-001",
+    ) -> List[float]:
+        if not text:
+            return []
+
+        try:
+            client = self._get_gemini_client()
+            # Vertex AI syntax slightly different from AI Studio for some versions,
+            # but client.aio.models.embed_content should work for both if unified.
+            response = await client.aio.models.embed_content(
+                model=model_id,
+                contents=text,
+                config=types.EmbedContentConfig(task_type="CLUSTERING")
+            )
+            return response.embeddings[0].values
+        except Exception as e:
+            logger.error(f"Failed to get embedding: {e}")
+            return []

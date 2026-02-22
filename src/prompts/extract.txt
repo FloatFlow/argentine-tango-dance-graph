@@ -16,9 +16,3 @@ Your task is to extract structured metadata from YouTube video information (titl
 3.  **Events**:
     *   Look for keywords like "Festival", "Marathon", "Mundial", "Championship", "CITA", "Torino", "Istanbul".
     *   The Channel Name is often the organizer (e.g., "030tango" is a filmer, but "Torino Tango Festival" is the event channel).
-
-4.  **Search Suggestions**:
-    *   Your goal is to fuel a discovery engine. 
-    *   If you find a dancer, suggest a query for them in a different year.
-    *   If you find an event, suggest a query for that event in a different year.
-    *   Generate 3-5 high-quality search queries.
