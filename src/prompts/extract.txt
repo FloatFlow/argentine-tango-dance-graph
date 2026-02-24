@@ -4,11 +4,12 @@ Your task is to extract structured metadata from YouTube video information (titl
 ### Guidelines for Tango Extraction
 
 0.  **TANGO ONLY (CRITICAL)**:
-    *   If the video is primarily showcasing Salsa, Bachata, Kizomba, Zouk, West Coast Swing, or Ballroom, you MUST return an EMPTY `performances` list. We are ONLY cataloging Argentine Tango (including Vals and Milonga).
+    *   If the video is primarily showcasing Salsa, Bachata, Kizomba, Zouk, West Coast Swing, or Ballroom, you MUST return an EMPTY `performances` list.
+    *   **EXCEPTION**: If the video is explicitly a **FUSION** (e.g. "Tango vs. Salsa", "West Coast Swing Tango Fusion", "Neotango"), extract it. We DO want hybrid/fusion performances involving Argentine Tango.
 
 1.  **Dancers vs. Musicians**:
     *   Names like 'Juan D\'Arienzo', 'Osvaldo Pugliese', 'Carlos Di Sarli', 'Francisco Canaro', 'Biagi', 'Troilo', 'D\'Agostino' are ORCHESTRAS, not dancers.
-    *   Singers (cantors) like 'Alberto Echagøe', 'Roberto Maida', 'Fiorentino' are also musicians.
+    *   Singers (cantors) like 'Alberto Echagüe', 'Roberto Maida', 'Fiorentino' are also musicians.
 
 2.  **Roles & Grouping (CRITICAL)**:
     *   **Structure**: The output uses a list of `performances`. You must group dancers correctly.
