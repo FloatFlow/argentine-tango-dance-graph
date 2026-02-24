@@ -238,9 +238,9 @@ class Rhizosphere:
             converted_convo = convert_history_to_gemini(chat_history)
             
             # DEBUG: Log payload size to check for massive context
-            payload_preview = json.dumps(chat_history)[:500]
-            logger.info(f"Sending Gemini Request: {model_id} | History Count: {len(chat_history)} | System Prompt Len: {len(system_prompt)}")
-            logger.debug(f"Payload Preview: {payload_preview}...")
+            #payload_preview = json.dumps(chat_history)[:500]
+            #logger.info(f"Sending Gemini Request: {model_id} | History Count: {len(chat_history)} | System Prompt Len: {len(system_prompt)}")
+            #logger.debug(f"Payload Preview: {payload_preview}...")
 
             try:
                 response = await client.aio.models.generate_content(

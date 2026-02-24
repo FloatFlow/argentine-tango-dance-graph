@@ -41,16 +41,35 @@ async def process_video(
         queue_manager.mark_video_seen(video_id)
         return False
     
+    # Filter out non-Tango dance styles to prevent graph drift
+    # This keeps the crawler focused if a channel uploads mixed content
+    forbidden = ["salsa", "bachata", "kizomba", "zouk", "west coast swing"]
+    if any(style in title.lower() for style in forbidden):
+        logger.info(f"Skipping non-Tango video: {title}")
+        queue_manager.mark_video_seen(video_id)
+        return False
+    
     # Check if already processed
     if queue_manager.is_video_seen(video_id):
         return False
 
     logger.info(f"Processing Video: {title} ({video_id})")
 
-    # 1. Fetch full details (description, tags)
-    details = tube_client.fetch_video_details(video_id)
+    # 1. Fetch full details (description, tags) - Wrapped in thread to avoid blocking loop
+    details = await asyncio.to_thread(tube_client.fetch_video_details, video_id)
     if not details:
         logger.warning(f"Could not fetch details for {video_id}")
+        return False
+
+    # 1.5 Deep Filter: Check Description and Tags for non-Tango content
+    # This catches videos where the title is generic (e.g. "Social Dance") but metadata reveals it's Salsa.
+    description = details.get('description', '').lower()
+    tags = [t.lower() for t in details.get('tags', [])]
+    combined_text = description + " " + " ".join(tags)
+    
+    if any(style in combined_text for style in forbidden):
+        logger.info(f"Skipping non-Tango video (Deep Filter): {title}")
+        queue_manager.mark_video_seen(video_id)
         return False
 
     # 2. Prepare context for LLM
@@ -107,7 +126,7 @@ async def process_video(
         # Only add new queries if we successfully extracted meaningful data
         if content.performances:
             # A. Exploitation (High Priority): Target newly discovered entities
-
+            
             # 1. Dancers
             for p in content.performances:
                 for dancer in p.dancers:
@@ -128,11 +147,13 @@ async def process_video(
                 await queue_manager.add_query(f"{content.event.name} tango", priority=5, llm_client=llm_client)
                 # Recent history expansion (Lower Priority - ensure freshness)
                 for year in range(2016, 2027):
-                    await queue_manager.add_query(f"{content.event.name} {year}", priority=10, llm_client=llm_client)
+                    query_str = f"{content.event.name} {year}"
+                    if await queue_manager.add_query(query_str, priority=10, llm_client=llm_client):
+                        logger.info(f"Queueing event expansion: '{query_str}'")
 
         # 6. Mark done
         queue_manager.mark_video_seen(video_id)
-        queue_manager.save_state()
+        # Note: save_state() moved to outer loop to prevent concurrent write collisions
         
         # Return True if we found actual performances, False if extraction was empty (irrelevant)
         return bool(content.performances)
@@ -141,7 +162,7 @@ async def process_video(
         logger.error(f"LLM Extraction failed for {video_id}: {e}")
         return False
 
-async def run_maintenance(graph_store: GraphStore, resolver: EntityResolver, llm_client: Rhizosphere):
+async def run_maintenance(graph_store: GraphStore, resolver: EntityResolver, llm_client: Rhizosphere, queue_manager: QueueManager):
     """
     Periodically runs deduplication on all entities found in the graph.
     """
@@ -175,11 +196,17 @@ async def run_maintenance(graph_store: GraphStore, resolver: EntityResolver, llm
     # 3. Update Style Embeddings (t-SNE)
     # This runs locally and saves coordinates to the JSON for the frontend
     graph_store.update_style_embeddings()
+    
+    # 4. Population Estimate (Chao1)
+    stats = queue_manager.get_population_estimate()
+    logger.success(f"--- Population Status ---")
+    logger.info(f"Seen Videos: {stats['observed']} | Estimated Total: {stats['estimated_total']}")
+    logger.info(f"Market Coverage: {stats['coverage_percent']}% (Singletons: {stats['singletons']}, Doubletons: {stats['doubletons']})")
         
     logger.info("--- Maintenance Complete ---")
 
 @gin.configurable
-async def main(video_delay: int = 5, query_delay: int = 10, search_limit: int = 50):
+async def main(video_delay: int = 5, query_delay: int = 10, search_limit: int = 50, maintenance_interval: int = 10, chunk_size: int = 5):
     # DEBUG: Verify Environment / Auth State
     project_id = os.environ.get("VERTEX_PROJECT_ID")
     api_key = os.environ.get("GOOGLE_API_KEY")
@@ -229,9 +256,9 @@ async def main(video_delay: int = 5, query_delay: int = 10, search_limit: int = 
     # Main Loop
     query_counter = 0
     while True:
-        # Run maintenance every 50 queries to keep the graph clean as it grows
-        if query_counter > 0 and query_counter % 50 == 0:
-            await run_maintenance(graph_store, resolver, llm_client)
+        # Run maintenance every N queries to keep the graph clean as it grows
+        if query_counter > 0 and query_counter % maintenance_interval == 0:
+            await run_maintenance(graph_store, resolver, llm_client, queue_manager)
 
         query = queue_manager.pop_query()
         if not query:
@@ -240,52 +267,66 @@ async def main(video_delay: int = 5, query_delay: int = 10, search_limit: int = 
             
         logger.info(f"--- Running Search Query: '{query}' ---")
         
-        # Search
-        # We fetch a larger batch (limit) to allow for filtering/skipping
-        results = tube_client.search(query, limit=search_limit)
+        # Search (offloaded to thread so we don't block)
+        results = await asyncio.to_thread(tube_client.search, query, limit=search_limit)
         
         seen_streak = 0
         irrelevant_streak = 0
         
-        for video_summary in results:
-            video_id = video_summary['id']
+        for i in range(0, len(results), chunk_size):
+            chunk = results[i:i+chunk_size]
+            tasks = []
             
-            # 1. Dynamic Depth: Check if we are retreading old ground
-            if queue_manager.is_video_seen(video_id):
-                seen_streak += 1
-                # If we see 10 videos in a row we've already processed, assume the rest are also seen
-                if seen_streak >= 10:
-                    logger.info(f"Stopping query '{query}' early due to {seen_streak} consecutive seen videos.")
-                    break
+            for video_summary in chunk:
+                video_id = video_summary['id']
+                
+                # 1. Dynamic Depth: Check if we are retreading old ground
+                if queue_manager.is_video_seen(video_id):
+                    seen_streak += 1
+                    continue
+                
+                seen_streak = 0 # Reset streak if we find a new video
+                
+                # 2. Add to concurrent processing pool
+                tasks.append(process_video(
+                    video_summary, 
+                    tube_client, 
+                    llm_client, 
+                    graph_store, 
+                    queue_manager,
+                    resolver,
+                    extract_prompt
+                ))
+
+            # Evaluate Seen Streak before running tasks
+            if seen_streak >= 10:
+                logger.info(f"Stopping query '{query}' early due to {seen_streak} consecutive seen videos.")
+                break
+                
+            if not tasks:
                 continue
+                
+            # Run chunk concurrently (Both yt-dlp fetches and LLM calls)
+            chunk_results = await asyncio.gather(*tasks)
             
-            seen_streak = 0 # Reset streak if we find a new video
-            
-            # 2. Process
-            processed = await process_video(
-                video_summary, 
-                tube_client, 
-                llm_client, 
-                graph_store, 
-                queue_manager,
-                resolver,
-                extract_prompt
-            )
+            # Save state once per chunk to avoid race conditions
+            queue_manager.save_state()
             
             # 3. Dynamic Depth: Check if results are drifting into irrelevance
-            if processed:
+            if any(chunk_results):
                 irrelevant_streak = 0
             else:
-                irrelevant_streak += 1
-                # If 10 consecutive videos are amateur or failed extraction, stop this query
-                if irrelevant_streak >= 10:
-                    logger.info(f"Stopping query '{query}' early due to {irrelevant_streak} consecutive irrelevant/failed videos.")
-                    break
+                irrelevant_streak += len(chunk_results)
+                
+            if irrelevant_streak >= 10:
+                logger.info(f"Stopping query '{query}' early due to {irrelevant_streak} consecutive irrelevant/failed videos.")
+                break
 
-            # Rate limiting sleep between videos
+            # Rate limiting sleep between chunks
             await asyncio.sleep(video_delay)
 
-        # Save state after query batch
+        # Mark query as done so it doesn't get re-queued on restart
+        queue_manager.complete_query()
         queue_manager.save_state()
         query_counter += 1
         

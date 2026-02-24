@@ -26,10 +26,15 @@ src.core.llm_client.Rhizosphere.model_id = "gemini-3-flash-preview"
 src.core.llm_client.Rhizosphere.model_kwargs = {
     "temperature": 0.7
 }
-# --- Rate Limiting ---
-# Seconds to wait between processing individual videos
-src.main.main.video_delay = 10
+# --- Rate Limiting & Concurrency ---
+# Seconds to wait between processing chunks of videos
+src.main.main.video_delay = 5
 # Seconds to wait between search queries
 src.main.main.query_delay = 10
-# Limit of videos to fetch per search query (default 50)
+# Limit of videos to fetch per search query
 src.main.main.search_limit = 100
+# Number of videos to process concurrently
+src.main.main.chunk_size = 5
+
+# Number of queries to process before running maintenance
+src.main.main.maintenance_interval = 10

@@ -3,9 +3,12 @@ Your task is to extract structured metadata from YouTube video information (titl
 
 ### Guidelines for Tango Extraction
 
+0.  **TANGO ONLY (CRITICAL)**:
+    *   If the video is primarily showcasing Salsa, Bachata, Kizomba, Zouk, West Coast Swing, or Ballroom, you MUST return an EMPTY `performances` list. We are ONLY cataloging Argentine Tango (including Vals and Milonga).
+
 1.  **Dancers vs. Musicians**:
     *   Names like 'Juan D\'Arienzo', 'Osvaldo Pugliese', 'Carlos Di Sarli', 'Francisco Canaro', 'Biagi', 'Troilo', 'D\'Agostino' are ORCHESTRAS, not dancers.
-    *   Singers (cantors) like 'Alberto Echagüe', 'Roberto Maida', 'Fiorentino' are also musicians.
+    *   Singers (cantors) like 'Alberto Echagøe', 'Roberto Maida', 'Fiorentino' are also musicians.
 
 2.  **Roles & Grouping (CRITICAL)**:
     *   **Structure**: The output uses a list of `performances`. You must group dancers correctly.
@@ -15,4 +18,7 @@ Your task is to extract structured metadata from YouTube video information (titl
 
 3.  **Events**:
     *   Look for keywords like "Festival", "Marathon", "Mundial", "Championship", "CITA", "Torino", "Istanbul".
+    *   **BASE NAME ONLY**: Strip out any edition numbers (e.g., 1st, 2nd, 10th, VI Edition) and years from the event name. 
+        *   *Bad*: "10th Tango Fiesta Patras 2018"
+        *   *Good*: "Tango Fiesta Patras"
     *   The Channel Name is often the organizer (e.g., "030tango" is a filmer, but "Torino Tango Festival" is the event channel).
