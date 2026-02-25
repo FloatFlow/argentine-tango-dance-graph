@@ -32,15 +32,28 @@ st.markdown("""
         /* Hide the default Streamlit header and footer */
         header {visibility: hidden;}
         footer {visibility: hidden;}
-        /* Tabs adjustment */
+        
+        /* Custom Tab Styling */
         .stTabs [data-baseweb="tab-list"] {
-            gap: 10px;
+            gap: 8px;
+            border-bottom: 1px solid #444;
         }
         .stTabs [data-baseweb="tab"] {
-            height: 40px;
+            height: 50px;
             white-space: pre-wrap;
-            padding-top: 0px;
-            padding-bottom: 0px;
+            background-color: #262730;
+            border-radius: 10px 10px 0px 0px;
+            gap: 1px;
+            padding: 10px 20px;
+            border: 1px solid #444;
+            border-bottom: none;
+            color: #fafafa;
+        }
+        .stTabs [aria-selected="true"] {
+            background-color: #0e1117 !important;
+            border-top: 3px solid #ff4b4b;
+            border-bottom: 1px solid #0e1117;
+            font-weight: bold;
         }
     </style>
 """, unsafe_allow_html=True)
@@ -556,14 +569,32 @@ with tab_library:
 with tab_dashboard:
     st.header("Global Statistics")
     
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Total Videos", len(videos))
-    c2.metric("Total Dancers", len(dancers))
+    # Calculate Population Estimators (Chao1)
+    sightings = queue_state.get("video_sightings", {})
+    # Fallback for legacy format
+    if not sightings and "seen_videos" in queue_state:
+        sightings = {v: 1 for v in queue_state["seen_videos"]}
+         
+    seen_count = len(sightings)
+    f1 = sum(1 for c in sightings.values() if c == 1) # Singletons
+    f2 = sum(1 for c in sightings.values() if c == 2) # Doubletons
+    
+    if f2 > 0:
+        est_total = seen_count + (f1 ** 2) / (2 * f2)
+    else:
+        est_total = seen_count + (f1 * (f1 - 1)) / (2 * (f2 + 1))
+        
+    coverage_pct = (seen_count / est_total * 100) if est_total > 0 else 0.0
+
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("Collected Videos", len(videos), help="Videos successfully extracted and stored in the graph.")
+    c2.metric("Total Dancers", len(dancers), help="Unique dancers identified in the graph.")
+    c3.metric("Est. Total Videos", f"{int(est_total):,}", help="Chao1 estimate of total discoverable videos based on recapture rate.")
+    c4.metric("Coverage", f"{coverage_pct:.1f}%", help="Percentage of the estimated total that has been processed.")
     
     # Queue Stats
     q_len = len(queue_state.get("queue", []))
-    seen_len = len(queue_state.get("seen_videos", []))
-    c3.metric("Pending Queries", q_len, delta=seen_len, delta_color="off")
+    c5.metric("Pending Queries", f"{q_len:,}")
     
     st.divider()
     
