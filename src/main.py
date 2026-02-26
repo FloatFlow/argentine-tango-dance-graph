@@ -273,35 +273,35 @@ async def main(video_delay: int = 5, query_delay: int = 10, search_limit: int = 
         seen_streak = 0
         irrelevant_streak = 0
         
+        # Process videos in chunks
         for i in range(0, len(results), chunk_size):
             chunk = results[i:i+chunk_size]
             tasks = []
             
-        for video_summary in chunk:
-            video_id = video_summary['id']
-            
-            # 1. Dynamic Depth: Check if we are retreading old ground
-            if queue_manager.is_video_seen(video_id):
-                # CRITICAL FIX: Record the collision to correct Chao1 stats
-                queue_manager.record_sighting(video_id)
+            for video_summary in chunk:
+                video_id = video_summary['id']
                 
-                seen_streak += 1
-                continue
-            
-            seen_streak = 0 # Reset streak if we find a new video
-            
-            # 2. Add to concurrent processing pool
-            tasks.append(process_video(
-                video_summary, 
-                tube_client, 
-                llm_client, 
-                graph_store, 
-                queue_manager,
-                resolver,
-                extract_prompt
-            ))
+                # 1. Dynamic Depth: Check if we are retreading old ground
+                if queue_manager.is_video_seen(video_id):
+                    # Record the collision to correct Chao1 stats
+                    queue_manager.record_sighting(video_id)
+                    seen_streak += 1
+                    continue
+                
+                seen_streak = 0 # Reset streak if we find a new video
+                
+                # 2. Add to concurrent processing pool
+                tasks.append(process_video(
+                    video_summary, 
+                    tube_client, 
+                    llm_client, 
+                    graph_store, 
+                    queue_manager,
+                    resolver,
+                    extract_prompt
+                ))
 
-            # Evaluate Seen Streak before running tasks
+            # Check streaks before running batch
             if seen_streak >= 10:
                 logger.info(f"Stopping query '{query}' early due to {seen_streak} consecutive seen videos.")
                 break
@@ -310,16 +310,19 @@ async def main(video_delay: int = 5, query_delay: int = 10, search_limit: int = 
                 continue
                 
             # Run chunk concurrently (Both yt-dlp fetches and LLM calls)
+            # We recreate the list of tasks every chunk iteration to ensure fresh coroutines
             chunk_results = await asyncio.gather(*tasks)
             
             # Save state once per chunk to avoid race conditions
             queue_manager.save_state()
             
             # 3. Dynamic Depth: Check if results are drifting into irrelevance
-            if any(chunk_results):
-                irrelevant_streak = 0
-            else:
-                irrelevant_streak += len(chunk_results)
+            # chunk_results contains the bool return values from process_video
+            for res in chunk_results:
+                if res:
+                    irrelevant_streak = 0
+                else:
+                    irrelevant_streak += 1
                 
             if irrelevant_streak >= 10:
                 logger.info(f"Stopping query '{query}' early due to {irrelevant_streak} consecutive irrelevant/failed videos.")
@@ -335,7 +338,6 @@ async def main(video_delay: int = 5, query_delay: int = 10, search_limit: int = 
         
         # Sleep between queries
         await asyncio.sleep(query_delay)
-
 if __name__ == "__main__":
     gin.parse_config_file("src/config.gin")
     asyncio.run(main())

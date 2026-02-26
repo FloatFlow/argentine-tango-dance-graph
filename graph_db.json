@@ -411774,6 +411774,182 @@
       "duration": 8,
       "thumbnail": "https://i.ytimg.com/vi/zKhRPi5REoU/maxresdefault.jpg",
       "tags": []
+    },
+    "TSyCP1_g4Rk": {
+      "performances": [
+        {
+          "dancers": [
+            {
+              "name": "Julio Romero",
+              "role": "leader"
+            },
+            {
+              "name": "Gloria Rossa",
+              "role": "follower"
+            }
+          ]
+        }
+      ],
+      "music": null,
+      "event": {
+        "name": "Acto 25 de Mayo",
+        "year": 2019,
+        "location": "Caleta Olivia, Santa Cruz, Argentina"
+      },
+      "videographer": "Gloria Rossa",
+      "video_type": "performance",
+      "dancers_legacy": null,
+      "title": "Presentación de Tango en CPES N* 22 - Acto 25 de Mayo",
+      "url": "https://www.youtube.com/watch?v=TSyCP1_g4Rk",
+      "duration": 69,
+      "thumbnail": "https://i.ytimg.com/vi/TSyCP1_g4Rk/sddefault.jpg?sqp=-oaymwEmCIAFEOAD8quKqQMa8AEB-AHeA4AC4AOKAgwIABABGFIgXShlMA8=&rs=AOn4CLA2r3SzRfjCWda3BNRNX1eKHIp_Bw",
+      "tags": []
+    },
+    "IKV1v3fG2Fo": {
+      "performances": [],
+      "music": null,
+      "event": {
+        "name": "Mañanas con Sabor a Tango",
+        "year": 2020,
+        "location": "Barranquilla, Colombia"
+      },
+      "videographer": "MAÑANAS CON SABOR A TANGO",
+      "video_type": "talk",
+      "dancers_legacy": null,
+      "title": "25 DE MAYO EN ARGENTINA -23- MAYO-2020",
+      "url": "https://www.youtube.com/watch?v=IKV1v3fG2Fo",
+      "duration": 1952,
+      "thumbnail": "https://i.ytimg.com/vi/IKV1v3fG2Fo/sddefault.jpg?sqp=-oaymwEmCIAFEOAD8quKqQMa8AEB-AHIAYAC6AKKAgwIABABGGUgWyhaMA8=&rs=AOn4CLCRZ9SAwBkrR_8MYda_MAYJ_7nuHg",
+      "tags": []
+    },
+    "qnxa0ResqSc": {
+      "performances": [],
+      "music": {
+        "orchestra": null,
+        "song": "Libertango",
+        "singer": null,
+        "style": "tango"
+      },
+      "event": {
+        "name": "acto 25 de Mayo",
+        "year": 2018,
+        "location": null
+      },
+      "videographer": "Laura Perillo",
+      "video_type": "performance",
+      "dancers_legacy": null,
+      "title": "Libertango acto 25 de Mayo",
+      "url": "https://www.youtube.com/watch?v=qnxa0ResqSc",
+      "duration": 157,
+      "thumbnail": "https://i.ytimg.com/vi/qnxa0ResqSc/hqdefault.jpg",
+      "tags": []
+    },
+    "lmGwEDUb1Ys": {
+      "performances": [],
+      "music": {
+        "orchestra": null,
+        "song": "Se dice de mi",
+        "singer": null,
+        "style": "tango"
+      },
+      "event": {
+        "name": "Festejos del 25 de Mayo",
+        "year": 2014,
+        "location": "IEC"
+      },
+      "videographer": "Fernando Jose Regis",
+      "video_type": "performance",
+      "dancers_legacy": null,
+      "title": "Tango en el acto del 25 de Mayo del IEC",
+      "url": "https://www.youtube.com/watch?v=lmGwEDUb1Ys",
+      "duration": 187,
+      "thumbnail": "https://i.ytimg.com/vi/lmGwEDUb1Ys/maxresdefault.jpg",
+      "tags": []
+    },
+    "L7hhZmzm9q8": {
+      "performances": [
+        {
+          "dancers": [
+            {
+              "name": "Jesica Bertoli",
+              "role": null
+            }
+          ]
+        }
+      ],
+      "music": {
+        "orchestra": null,
+        "song": "El Sol del 25",
+        "singer": null,
+        "style": "tango"
+      },
+      "event": null,
+      "videographer": "Jesica Bertoli",
+      "video_type": "performance",
+      "dancers_legacy": null,
+      "title": "\"El Sol del 25\"",
+      "url": "https://www.youtube.com/watch?v=L7hhZmzm9q8",
+      "duration": 135,
+      "thumbnail": "https://i.ytimg.com/vi/L7hhZmzm9q8/sddefault.jpg?sqp=-oaymwEmCIAFEOAD8quKqQMa8AEB-AHUBoAC4AOKAgwIABABGGUgWChHMA8=&rs=AOn4CLCPvDw5XppHl3U_Jr0ZBBjX79m8Mw",
+      "tags": []
+    },
+    "6D02UEc0miQ": {
+      "performances": [
+        {
+          "dancers": [
+            {
+              "name": "Rober",
+              "role": null
+            }
+          ]
+        }
+      ],
+      "music": {
+        "orchestra": null,
+        "song": null,
+        "singer": null,
+        "style": "tango"
+      },
+      "event": {
+        "name": "Acto 25 de Mayo Escuela Mitre",
+        "year": 2019,
+        "location": null
+      },
+      "videographer": "robertu pop",
+      "video_type": "performance",
+      "dancers_legacy": [
+        {
+          "name": "Rober",
+          "role": null
+        }
+      ],
+      "title": "Rober bailando Tango, acto 25 de Mayo esc Mitre 2019!!!",
+      "url": "https://www.youtube.com/watch?v=6D02UEc0miQ",
+      "duration": 183,
+      "thumbnail": "https://i.ytimg.com/vi/6D02UEc0miQ/maxresdefault.jpg",
+      "tags": []
+    },
+    "CAkC51PcP8o": {
+      "performances": [],
+      "music": {
+        "orchestra": null,
+        "song": null,
+        "singer": null,
+        "style": "electronic"
+      },
+      "event": {
+        "name": "Westminster",
+        "year": 2017,
+        "location": "Westminster"
+      },
+      "videographer": "Mariela Ucha",
+      "video_type": "performance",
+      "dancers_legacy": null,
+      "title": "Tango electrónico Westminster 25 de mayo",
+      "url": "https://www.youtube.com/watch?v=CAkC51PcP8o",
+      "duration": 338,
+      "thumbnail": "https://i.ytimg.com/vi_webp/CAkC51PcP8o/maxresdefault.webp",
+      "tags": []
     }
   },
   "dancers": {
@@ -598196,6 +598372,64 @@
       "roles": [
         "follower"
       ],
+      "style_embedding": null,
+      "similar_dancers": []
+    },
+    "Julio Romero": {
+      "videos": [
+        "TSyCP1_g4Rk"
+      ],
+      "partners": {
+        "Gloria Rossa": 1
+      },
+      "events": {
+        "Acto 25 de Mayo": 1
+      },
+      "tags": {},
+      "roles": [
+        "leader"
+      ],
+      "style_embedding": null,
+      "similar_dancers": []
+    },
+    "Gloria Rossa": {
+      "videos": [
+        "TSyCP1_g4Rk"
+      ],
+      "partners": {
+        "Julio Romero": 1
+      },
+      "events": {
+        "Acto 25 de Mayo": 1
+      },
+      "tags": {},
+      "roles": [
+        "follower"
+      ],
+      "style_embedding": null,
+      "similar_dancers": []
+    },
+    "Jesica Bertoli": {
+      "videos": [
+        "L7hhZmzm9q8"
+      ],
+      "partners": {},
+      "events": {},
+      "tags": {},
+      "roles": [],
+      "style_embedding": null,
+      "similar_dancers": []
+    },
+    "Rober": {
+      "videos": [
+        "6D02UEc0miQ"
+      ],
+      "partners": {},
+      "events": {
+        "Acto 25 de Mayo Escuela Mitre": 1
+      },
+      "tags": {},
+      "roles": [],
       "style_embedding": null,
       "similar_dancers": []
     }
