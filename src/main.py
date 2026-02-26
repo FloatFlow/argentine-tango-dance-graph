@@ -277,17 +277,20 @@ async def main(video_delay: int = 5, query_delay: int = 10, search_limit: int = 
             chunk = results[i:i+chunk_size]
             tasks = []
             
-            for video_summary in chunk:
-                video_id = video_summary['id']
+        for video_summary in chunk:
+            video_id = video_summary['id']
+            
+            # 1. Dynamic Depth: Check if we are retreading old ground
+            if queue_manager.is_video_seen(video_id):
+                # CRITICAL FIX: Record the collision to correct Chao1 stats
+                queue_manager.record_sighting(video_id)
                 
-                # 1. Dynamic Depth: Check if we are retreading old ground
-                if queue_manager.is_video_seen(video_id):
-                    seen_streak += 1
-                    continue
-                
-                seen_streak = 0 # Reset streak if we find a new video
-                
-                # 2. Add to concurrent processing pool
+                seen_streak += 1
+                continue
+            
+            seen_streak = 0 # Reset streak if we find a new video
+            
+            # 2. Add to concurrent processing pool
                 tasks.append(process_video(
                     video_summary, 
                     tube_client, 
