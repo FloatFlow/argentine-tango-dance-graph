@@ -114,12 +114,13 @@ class GraphStore:
                         continue
                     entry["partners"][partner_name] = entry["partners"].get(partner_name, 0) + 1
 
-    def normalize_graph(self):
+    def normalize_graph(self, resolver=None):
         """
         Maintenance routine to:
         1. Migrate legacy schema (flat dancers -> performances)
         2. Retroactively apply partnership inference to old videos
-        3. Rebuild the dancer index from scratch to ensure consistency
+        3. Apply Entity Resolution (Aliases) if resolver provided
+        4. Rebuild the dancer index from scratch to ensure consistency
         """
         logger.info("--- Running Graph Normalization ---")
         updates_count = 0
@@ -136,12 +137,34 @@ class GraphStore:
             changed = False
 
             # A. Schema Migration is handled by Pydantic model_validator on load
-            # We just need to check if we need to write it back. 
-            # If original data had 'dancers' but no 'performances', Pydantic fixed it in 'content'.
             if "dancers" in data and not data.get("performances"):
                 changed = True
 
-            # B. Disambiguation (Retroactive)
+            # B. Entity Resolution (Aliases)
+            if resolver:
+                # Events
+                if content.event and content.event.name:
+                    orig_evt = content.event.name
+                    content.event.name = resolver.resolve_event(orig_evt)
+                    if content.event.name != orig_evt:
+                        changed = True
+
+                # Videographers
+                if content.videographer:
+                    orig_vid = content.videographer
+                    content.videographer = resolver.resolve(orig_vid, "videographers")
+                    if content.videographer != orig_vid:
+                        changed = True
+
+                # Dancers (Explicit Alias Check)
+                for p in content.performances:
+                    for d in p.dancers:
+                        orig_d = d.name
+                        d.name = resolver.resolve_dancer(orig_d)
+                        if d.name != orig_d:
+                            changed = True
+
+            # C. Disambiguation (Partnership Inference)
             for p in content.performances:
                 if len(p.dancers) == 2:
                     d1, d2 = p.dancers[0], p.dancers[1]

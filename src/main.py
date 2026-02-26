@@ -157,8 +157,8 @@ async def process_video(
 
 async def run_maintenance(graph_store: GraphStore, resolver: EntityResolver, llm_client: Rhizosphere, queue_manager: QueueManager):
     logger.info("--- Running Graph Maintenance ---")
-    graph_store.normalize_graph()
-    
+    # 1. Run Deduplication FIRST to identify aliases
+    # This updates the resolver's internal alias list and the aliases.json file
     dancer_names = list(graph_store.dancers.keys())
     if dancer_names:
         await resolver.run_deduplication(dancer_names, "dancers", llm_client, graph_store)
@@ -176,6 +176,11 @@ async def run_maintenance(graph_store: GraphStore, resolver: EntityResolver, llm
     if video_names:
         await resolver.run_deduplication(list(video_names), "videographers", llm_client)
 
+    # 2. Normalize Graph
+    # This applies the aliases we just found to the video records and rebuilds the dancer index
+    graph_store.normalize_graph(resolver=resolver)
+
+    # 3. Update Embeddings (on the clean index)
     graph_store.update_style_embeddings()
     
     stats = queue_manager.get_population_estimate()
