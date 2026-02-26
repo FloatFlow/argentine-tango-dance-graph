@@ -291,15 +291,15 @@ async def main(video_delay: int = 5, query_delay: int = 10, search_limit: int = 
             seen_streak = 0 # Reset streak if we find a new video
             
             # 2. Add to concurrent processing pool
-                tasks.append(process_video(
-                    video_summary, 
-                    tube_client, 
-                    llm_client, 
-                    graph_store, 
-                    queue_manager,
-                    resolver,
-                    extract_prompt
-                ))
+            tasks.append(process_video(
+                video_summary, 
+                tube_client, 
+                llm_client, 
+                graph_store, 
+                queue_manager,
+                resolver,
+                extract_prompt
+            ))
 
             # Evaluate Seen Streak before running tasks
             if seen_streak >= 10:
