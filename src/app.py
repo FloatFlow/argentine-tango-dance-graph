@@ -153,9 +153,15 @@ def get_atlas_data(dancers_data):
     
     if len(df) > 10:
         # Low min_samples to respect user preference/data density
-        hdb = HDBSCAN(min_cluster_size=4, min_samples=2)
-        df['cluster'] = hdb.fit_predict(df[['x', 'y']])
-        df['cluster'] = df['cluster'].astype(str)
+        # Removed cluster_selection_epsilon to prevent sklearn TypeError
+        hdb = HDBSCAN(min_cluster_size=6, min_samples=2)
+        try:
+            # Explicitly convert to numpy array to avoid DataFrame indexing issues in Cython
+            df['cluster'] = hdb.fit_predict(df[['x', 'y']].to_numpy())
+            df['cluster'] = df['cluster'].astype(str)
+        except Exception as e:
+            st.warning(f"Clustering failed: {e}")
+            df['cluster'] = "0"
         
         # --- Coloring Strategy: Golden Angle ---
         # Goal: Unique color per cluster, high contrast neighbors, "solid" look.
@@ -537,7 +543,7 @@ with tab_library:
         # --- Pagination Control ---
         # Initialize limit in session state if not present
         if "lib_limit" not in st.session_state:
-            st.session_state.lib_limit = 20
+            st.session_state.lib_limit = 200
             
         # Apply Limit
         display_df = filtered_df.head(st.session_state.lib_limit)
@@ -563,7 +569,7 @@ with tab_library:
         # --- Load More Button ---
         if len(display_df) < len(filtered_df):
             if st.button("Load More Videos", use_container_width=True):
-                st.session_state.lib_limit += 20
+                st.session_state.lib_limit += 200
                 st.rerun()
 # --- TAB 3: DASHBOARD ---
 with tab_dashboard:
@@ -617,9 +623,9 @@ with tab_dashboard:
                 title=title,
                 color_discrete_sequence=[color]
             )
-            fig.update_xaxes(categoryorder='total descending')
+            fig.update_xaxes(categoryorder='total descending', tickangle=-90)
             fig.update_layout(
-                yaxis=dict(fixedrange=True), 
+                yaxis=dict(title="Video Count", fixedrange=True), 
                 xaxis=dict(fixedrange=False),
                 dragmode='pan'
             )

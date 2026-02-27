@@ -5,7 +5,7 @@ from loguru import logger
 import gin
 import pandas as pd
 import numpy as np
-from sklearn.manifold import TSNE
+import umap
 from sklearn.feature_extraction.text import TfidfTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 from src.core.schemas import VideoContent
@@ -273,7 +273,7 @@ class GraphStore:
 
     def update_style_embeddings(self):
         """
-        Runs the heavy math (TF-IDF, Cosine Similarity, t-SNE) in batch.
+        Runs the heavy math (TF-IDF, Cosine Similarity, UMAP) in batch.
         Updates both the 2D coordinates AND the nearest-neighbor lists.
         """
         all_dancers = list(self.dancers.keys())
@@ -336,13 +336,17 @@ class GraphStore:
                 scores.sort(key=lambda x: x["score"], reverse=True)
                 self.dancers[dancer_name]["similar_dancers"] = scores[:5]
 
-            # 4. t-SNE Calculation (for Visualization)
-            # Use the TF-IDF matrix as input
-            n_samples = len(active_dancers)
-            perplexity = min(30, n_samples - 1)
-            
-            tsne = TSNE(n_components=2, perplexity=perplexity, random_state=42, init='pca', learning_rate='auto')
-            components = tsne.fit_transform(tfidf_matrix.toarray())
+            # 4. UMAP Calculation
+            # UMAP preserves global structure better than t-SNE
+            # n_neighbors: Higher values (30-50) capture global structure better than local details
+            reducer = umap.UMAP(
+                n_neighbors=50, 
+                n_components=2, 
+                min_dist=0.1, 
+                metric='cosine',
+                random_state=42
+            )
+            components = reducer.fit_transform(tfidf_matrix)
             
             # Store Coordinates
             for idx, dancer in enumerate(active_dancers):

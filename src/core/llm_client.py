@@ -128,7 +128,7 @@ class Rhizosphere:
         return combined
 
     # Restoring retry with tighter wait (2 seconds fixed) as requested
-    @retry(stop=stop_after_attempt(5), wait=wait_fixed(2))
+    @retry(stop=stop_after_attempt(10), wait=wait_random_exponential(multiplier=1, max=60))
     async def stream_call(
         self,
         chat_history: List[Dict[str, str]],
@@ -203,7 +203,7 @@ class Rhizosphere:
             )
 
     # Restoring retry with tighter wait (2 seconds fixed)
-    @retry(stop=stop_after_attempt(5), wait=wait_fixed(2))
+    @retry(stop=stop_after_attempt(10), wait=wait_random_exponential(multiplier=1, max=60))
     async def structured_call(
         self,
         chat_history: List[Dict[str, str]],
@@ -285,8 +285,8 @@ class Rhizosphere:
         Includes manual retry logic for connection errors (e.g., 503) only if no data has been sent yet.
         """
         final_kwargs = self._merge_kwargs(model_kwargs)
-        max_retries = 3 # Increased back to 3
-        retry_delay = 2 # Fixed tight delay
+        max_retries = 6 # Increased to allow for ~1 min backoff
+        retry_delay = 1 # Start small
 
         for attempt in range(max_retries):
             has_yielded = False
