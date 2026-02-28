@@ -9,6 +9,8 @@ from sklearn.cluster import HDBSCAN
 import seaborn as sns
 import networkx as nx
 from scipy.spatial import Delaunay
+import umap
+from sklearn.feature_extraction.text import TfidfTransformer
 
 # Page Config
 st.set_page_config(
@@ -18,36 +20,41 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# --- CSS Tweaks for Fullscreen Feel ---
+# --- CSS Tweaks for Fullscreen Feel & Mobile ---
 st.markdown("""
     <style>
-        /* Aggressively remove padding to maximize chart space */
+        /* Aggressively remove padding to maximize chart space, but keep enough for touch handling */
         .block-container {
-            padding-top: 0.5rem !important;
-            padding-bottom: 0rem !important;
-            padding-left: 1rem !important;
-            padding-right: 1rem !important;
+            padding-top: 1rem !important;
+            padding-bottom: 2rem !important;
+            padding-left: 0.5rem !important;
+            padding-right: 0.5rem !important;
             max-width: 100% !important;
         }
         /* Hide the default Streamlit header and footer */
         header {visibility: hidden;}
         footer {visibility: hidden;}
         
-        /* Custom Tab Styling */
+        /* Custom Tab Styling - Mobile Friendly */
         .stTabs [data-baseweb="tab-list"] {
-            gap: 8px;
+            gap: 4px;
             border-bottom: 1px solid #444;
+            flex-wrap: wrap; /* Allow wrapping on very small screens */
         }
         .stTabs [data-baseweb="tab"] {
-            height: 50px;
+            min-height: 45px;
+            height: auto; /* Allow growth */
             white-space: pre-wrap;
             background-color: #262730;
-            border-radius: 10px 10px 0px 0px;
+            border-radius: 8px 8px 0px 0px;
             gap: 1px;
-            padding: 10px 20px;
+            padding: 8px 16px;
             border: 1px solid #444;
             border-bottom: none;
             color: #fafafa;
+            font-size: 0.9rem;
+            flex-grow: 1; /* Stretch tabs to fill width on mobile */
+            text-align: center;
         }
         .stTabs [aria-selected="true"] {
             background-color: #0e1117 !important;
@@ -85,57 +92,118 @@ def load_queue_state():
 
 # --- Expensive Computation Cache ---
 @st.cache_data
-def get_atlas_data(dancers_data):
+def get_atlas_data(dancers_data, layout_neighbors=15, cluster_neighbors=15, min_dist=1.0, spread=5.0, init_mode='random', decoupling=False):
     """
-    Pre-computes the dataframe and clustering to avoid delays on interaction.
-    Merges dancers with identical coordinates into a single 'Couple' point.
-    Returns (DataFrame, color_map_dict)
+    Computes UMAP embeddings on the fly.
+    Args:
+        decoupling (bool): If True, runs UMAP twice. Once for Layout (Visual) and once for Clustering (Color).
+                            This allows for 'Low Neighbors' layout (tight, clean) with 'High Neighbors' clustering (global structure).
     """
-    # 1. Group by Coordinates to handle overlaps
-    grouped_points = {}
+    # 1. Feature Extraction
+    active_dancers = [d for d, info in dancers_data.items() if len(info.get('videos', [])) > 1]
     
-    for name, info in dancers_data.items():
-        embedding = info.get("style_embedding")
+    if len(active_dancers) < 10:
+        return pd.DataFrame(), {}
+
+    # Build Feature Space
+    all_features = set()
+    for d in active_dancers:
+        all_features.update(dancers_data[d].get("partners", {}).keys())
+        all_features.update(dancers_data[d].get("events", {}).keys())
+        all_features.update(dancers_data[d].get("orchestras", {}).keys())
+    
+    feature_list = sorted(list(all_features))
+    feature_map = {name: i for i, name in enumerate(feature_list)}
+    
+    # Build Matrix
+    data_matrix = []
+    for dancer in active_dancers:
+        row = [0] * len(feature_list)
+        d_data = dancers_data[dancer]
+        for p, count in d_data.get("partners", {}).items():
+            if p in feature_map: row[feature_map[p]] = count
+        for e, count in d_data.get("events", {}).items():
+            if e in feature_map: row[feature_map[e]] = count * 2
+        for o, count in d_data.get("orchestras", {}).items():
+            if o in feature_map: row[feature_map[o]] = count * 1.5
+        data_matrix.append(row)
+        
+    tfidf = TfidfTransformer()
+    tfidf_matrix = tfidf.fit_transform(data_matrix)
+    
+    # --- 2. UMAP Calculation (Layout) ---
+    reducer_layout = umap.UMAP(
+        n_neighbors=layout_neighbors, 
+        n_components=2, 
+        min_dist=min_dist, 
+        spread=spread,
+        metric='cosine',
+        init=init_mode, 
+        random_state=42
+    )
+    layout_coords = reducer_layout.fit_transform(tfidf_matrix)
+    
+    # --- 3. Clustering Logic ---
+    if decoupling and cluster_neighbors != layout_neighbors:
+        # Dual UMAP: Run a second pass purely for finding global structure clusters
+        reducer_cluster = umap.UMAP(
+            n_neighbors=cluster_neighbors,
+            n_components=2,
+            min_dist=0.0, # Tight packing for clustering
+            metric='cosine',
+            random_state=42
+        )
+        cluster_coords = reducer_cluster.fit_transform(tfidf_matrix)
+    else:
+        cluster_coords = layout_coords
+
+    # Map back to dancer names
+    temp_embeddings = {}
+    for idx, dancer in enumerate(active_dancers):
+        temp_embeddings[dancer] = {
+            "x": float(layout_coords[idx][0]),
+            "y": float(layout_coords[idx][1]),
+            "cx": float(cluster_coords[idx][0]), # Clustering coordinates
+            "cy": float(cluster_coords[idx][1])
+        }
+
+    # 4. Group by Layout Coordinates (Couples)
+    grouped_points = {}
+    for name in active_dancers:
+        embedding = temp_embeddings.get(name)
         if embedding:
-            # Round to 4 decimals to catch exact/near-exact overlaps
+            # Group by Visual Location (x, y)
             key = (round(embedding["x"], 4), round(embedding["y"], 4))
-            
             if key not in grouped_points:
                 grouped_points[key] = []
-            
             grouped_points[key].append({
                 "name": name,
-                "videos": len(info.get("videos", [])),
+                "videos": len(dancers_data[name].get("videos", [])),
                 "x": embedding["x"],
-                "y": embedding["y"]
+                "y": embedding["y"],
+                "cx": embedding["cx"],
+                "cy": embedding["cy"]
             })
     
-    # 2. Flatten back to list, merging couples
+    # 5. Flatten back to list
     plot_data = []
     for key, group in grouped_points.items():
-        if not group:
-            continue
-            
+        if not group: continue
         if len(group) == 1:
             plot_data.append(group[0])
         else:
-            # Sort by video count (desc) then name to be deterministic
             group.sort(key=lambda x: (-x["videos"], x["name"]))
-            
-            # Create composite entry
             names = [g["name"] for g in group]
-            display_name = " & ".join(names[:3]) # Limit to 3 names to avoid huge strings
-            if len(names) > 3:
-                display_name += f" (+{len(names)-3})"
-                
-            # Use data from the first entity (they are overlapping, so x/y is same)
+            display_name = " & ".join(names[:3])
+            if len(names) > 3: display_name += f" (+{len(names)-3})"
             primary = group[0]
             plot_data.append({
                 "name": display_name,
                 "x": primary["x"],
                 "y": primary["y"],
+                "cx": primary["cx"],
+                "cy": primary["cy"],
                 "videos": primary["videos"],
-                # Store original names for search/filtering if needed
                 "members": names 
             })
     
@@ -144,80 +212,52 @@ def get_atlas_data(dancers_data):
 
     df = pd.DataFrame(plot_data)
 
-    # 3. Clustering & Coloring
-    # Use default palette to get the specific gray for outliers
+    # 6. HDBSCAN Clustering
     default_palette = sns.color_palette().as_hex()
-    outlier_color = default_palette[7] # Gray
-    
-    color_map = {'-1': outlier_color}
+    color_map = {'-1': default_palette[7]}
     
     if len(df) > 10:
-        # Low min_samples to respect user preference/data density
-        # Removed cluster_selection_epsilon to prevent sklearn TypeError
+        # Cluster on the 'c' coordinates (Global Structure or Local, depending on decoupling)
         hdb = HDBSCAN(min_cluster_size=6, min_samples=2)
         try:
-            # Explicitly convert to numpy array to avoid DataFrame indexing issues in Cython
-            df['cluster'] = hdb.fit_predict(df[['x', 'y']].to_numpy())
+            df['cluster'] = hdb.fit_predict(df[['cx', 'cy']].to_numpy())
             df['cluster'] = df['cluster'].astype(str)
         except Exception as e:
             st.warning(f"Clustering failed: {e}")
             df['cluster'] = "0"
         
-        # --- Coloring Strategy: Golden Angle ---
-        # Goal: Unique color per cluster, high contrast neighbors, "solid" look.
+        # Golden Angle Coloring (Sorted by Layout X to keep rainbow coherent visually)
         unique_clusters = sorted([c for c in df['cluster'].unique() if c != '-1'])
         n_clusters = len(unique_clusters)
-        
         if n_clusters > 0:
-            # 1. Sort clusters spatially (by X coordinate of centroid)
-            # This ensures that as we iterate through the color sequence, 
-            # we are assigning them to clusters that are spatially related.
             cluster_centroids = []
             for c in unique_clusters:
+                # Sort colors based on where they appear on the visual map (x), not the cluster map
                 centroid_x = df.loc[df['cluster'] == c, 'x'].mean()
                 cluster_centroids.append((c, centroid_x))
-            
-            # Sort by X
             cluster_centroids.sort(key=lambda x: x[1])
             sorted_labels = [x[0] for x in cluster_centroids]
             
-            # 2. Generate N distinct colors using Golden Angle approximation
-            # This mathematically ensures that consecutive indices have distinct hues.
             import colorsys
             import matplotlib.colors
-            
             golden_ratio_conjugate = 0.618033988749895
             palette = []
-            
             for i in range(n_clusters):
-                # Hue calculation
                 h = (0.0 + i * golden_ratio_conjugate) % 1.0
-                
-                # Alternating Lightness/Saturation to mimic tab20's contrast
-                # Even indices: Darker/Richer (Anchor points)
-                # Odd indices: Lighter/Softer (Contrast points)
                 if i % 2 == 0:
-                    l = 0.45
-                    s = 0.85
-                else:
-                    l = 0.65
-                    s = 0.75
-                
+                    l, s = 0.45, 0.85
+                else: 
+                    l, s = 0.65, 0.75
                 rgb = colorsys.hls_to_rgb(h, l, s)
-                hex_color = matplotlib.colors.to_hex(rgb)
-                palette.append(hex_color)
+                palette.append(matplotlib.colors.to_hex(rgb))
             
-            # 3. Assign 1-to-1
             for i, label in enumerate(sorted_labels):
                 color_map[label] = palette[i]
-            
     else:
         df['cluster'] = "0"
         color_map['0'] = default_palette[0]
 
-    # 4. Sizing
     df['size_log'] = np.log1p(df['videos']) * 8 
-    
     return df, color_map
 
 
@@ -334,7 +374,7 @@ def show_dancer_details(dancer_name):
                     name = item.get("name")
                     score = item.get("score", 0)
                     with sim_cols[idx % 2]:
-                        if st.button(f"{name} ({score:.2f})", key=f"modal_sim_{name}", width="stretch"):
+                        if st.button(f"{name} ({score:.2f})", key=f"modal_sim_{name}", use_container_width=True):
                             st.session_state["selected_dancer"] = name
                             st.rerun()
             else:
@@ -376,8 +416,16 @@ tab_atlas, tab_library, tab_dashboard = st.tabs(["Style Atlas", "Video Library",
 
 # --- TAB 1: STYLE ATLAS ---
 with tab_atlas:
-    # Optimized Data Loading
-    df, color_map = get_atlas_data(dancers)
+    # Hardcoded parameters based on user preference
+    df, color_map = get_atlas_data(
+        dancers, 
+        layout_neighbors=15, 
+        cluster_neighbors=15, 
+        min_dist=1.0, 
+        spread=5.0, 
+        init_mode='random', 
+        decoupling=False
+    )
     
     if df.empty:
         st.warning("No style embeddings found. Wait for the maintenance cycle to run.")
@@ -385,7 +433,7 @@ with tab_atlas:
         # --- Controls Row ---
         c_search, c_info = st.columns([1, 5])
         with c_search:
-            if st.button("🔍 Search", width="stretch"):
+            if st.button("🔍 Search", use_container_width=True):
                 all_names = sorted(df['name'].tolist())
                 show_search_modal(all_names)
         
@@ -415,7 +463,7 @@ with tab_atlas:
             color_discrete_map=color_map,
             hover_data=['name', 'videos'],
             # Fixed height to fit standard laptop screens without scrolling
-            height=650,
+            height=550,
             # Use custom_data to pass the name safely for click events
             custom_data=['name']
         )
@@ -489,10 +537,10 @@ with tab_atlas:
         # Render Chart
         selection = st.plotly_chart(
             fig, 
-            width="stretch", 
+            use_container_width=True,
             on_select="rerun",
             selection_mode="points",
-            config={'scrollZoom': True, 'displayModeBar': True}
+            config={'scrollZoom': True, 'displayModeBar': False}
         )
 
         # Interaction Handler
@@ -509,7 +557,6 @@ with tab_atlas:
         if st.session_state.get("show_modal", False) and active_dancer:
             show_dancer_details(active_dancer)
 
-# --- TAB 2: VIDEO LIBRARY ---
 # --- TAB 2: VIDEO LIBRARY ---
 with tab_library:
     df_videos = get_library_data(videos)
@@ -571,6 +618,7 @@ with tab_library:
             if st.button("Load More Videos", use_container_width=True):
                 st.session_state.lib_limit += 200
                 st.rerun()
+
 # --- TAB 3: DASHBOARD ---
 with tab_dashboard:
     st.header("Global Statistics")
@@ -629,7 +677,7 @@ with tab_dashboard:
                 xaxis=dict(fixedrange=False),
                 dragmode='pan'
             )
-            st.plotly_chart(fig, width="stretch")
+            st.plotly_chart(fig, use_container_width=True)
 
         # 1. Top Festivals
         all_events = []

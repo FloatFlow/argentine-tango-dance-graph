@@ -5,7 +5,6 @@ from loguru import logger
 import gin
 import pandas as pd
 import numpy as np
-import umap
 from sklearn.feature_extraction.text import TfidfTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 from src.core.schemas import VideoContent
@@ -67,6 +66,8 @@ class GraphStore:
         Used by add_video and normalize_graph.
         """
         event_name = content.event.name if content.event else None
+        # Extract Orchestra (New Feature)
+        orchestra = content.music.orchestra if content.music else None
         
         # 1. Gather all dancers for global stats (Appearance in Video / Event)
         all_dancers_in_video = []
@@ -79,6 +80,7 @@ class GraphStore:
                     "videos": [], 
                     "partners": {}, 
                     "events": {}, 
+                    "orchestras": {}, # NEW: Music preference
                     "tags": {}, 
                     "roles": set(),
                     "similar_dancers": [] 
@@ -94,6 +96,12 @@ class GraphStore:
             # Update Event Attendance
             if event_name:
                 entry["events"][event_name] = entry["events"].get(event_name, 0) + 1
+
+            # Update Orchestra Preference
+            if orchestra:
+                # Ensure dict exists for legacy records
+                if "orchestras" not in entry: entry["orchestras"] = {}
+                entry["orchestras"][orchestra] = entry["orchestras"].get(orchestra, 0) + 1
 
             # Update Tags
             if tags:
@@ -114,6 +122,27 @@ class GraphStore:
                         continue
                     entry["partners"][partner_name] = entry["partners"].get(partner_name, 0) + 1
 
+    def save(self):
+        # Convert sets to lists for JSON serialization
+        dancers_serializable = {}
+        for k, v in self.dancers.items():
+            dancers_serializable[k] = {
+                "videos": v["videos"],
+                "partners": v["partners"],
+                "events": v.get("events", {}),
+                "orchestras": v.get("orchestras", {}),
+                "tags": v.get("tags", {}),
+                "roles": list(v.get("roles", [])),
+                "style_embedding": v.get("style_embedding"),
+                "similar_dancers": v.get("similar_dancers", [])
+            }
+            
+        data = {
+            "videos": self.videos,
+            "dancers": dancers_serializable
+        }
+        with open(self.db_file, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
     def normalize_graph(self, resolver=None):
         """
         Maintenance routine to:
@@ -273,8 +302,9 @@ class GraphStore:
 
     def update_style_embeddings(self):
         """
-        Runs the heavy math (TF-IDF, Cosine Similarity, UMAP) in batch.
-        Updates both the 2D coordinates AND the nearest-neighbor lists.
+        Runs the heavy math (TF-IDF, Cosine Similarity).
+        Updates the nearest-neighbor lists for the graph.
+        Note: 2D Coordinates (UMAP) are now computed on the frontend.
         """
         all_dancers = list(self.dancers.keys())
         # Filter for active dancers to reduce noise (must have > 1 video)
@@ -285,13 +315,14 @@ class GraphStore:
         
         try:
             # 1. Build Feature Space
-            # We combine Partners + Events into a single feature set
+            # We combine Partners + Events + Orchestras into a single feature set
             all_features = set()
             
             # Collect all possible features first
             for d in active_dancers:
                 all_features.update(self.dancers[d].get("partners", {}).keys())
                 all_features.update(self.dancers[d].get("events", {}).keys())
+                all_features.update(self.dancers[d].get("orchestras", {}).keys())
             
             feature_list = sorted(list(all_features))
             feature_map = {name: i for i, name in enumerate(feature_list)}
@@ -311,6 +342,11 @@ class GraphStore:
                 for e, count in d_data.get("events", {}).items():
                     if e in feature_map:
                         row[feature_map[e]] = count * 2
+
+                # Orchestras (Weight x1.5)
+                for o, count in d_data.get("orchestras", {}).items():
+                    if o in feature_map:
+                        row[feature_map[o]] = count * 1.5
                         
                 data_matrix.append(row)
             
@@ -320,7 +356,6 @@ class GraphStore:
             tfidf_matrix = tfidf.fit_transform(data_matrix)
             
             # 3. Compute Pairwise Similarity (Cosine on TF-IDF vectors)
-            # This replaces the runtime Jaccard calculation
             sim_matrix = cosine_similarity(tfidf_matrix)
             
             # Store Top 5 Neighbors for each dancer
@@ -336,29 +371,12 @@ class GraphStore:
                 scores.sort(key=lambda x: x["score"], reverse=True)
                 self.dancers[dancer_name]["similar_dancers"] = scores[:5]
 
-            # 4. UMAP Calculation
-            # UMAP preserves global structure better than t-SNE
-            # n_neighbors: Higher values (30-50) capture global structure better than local details
-            reducer = umap.UMAP(
-                n_neighbors=50, 
-                n_components=2, 
-                min_dist=0.1, 
-                metric='cosine',
-                random_state=42
-            )
-            components = reducer.fit_transform(tfidf_matrix)
-            
-            # Store Coordinates
-            for idx, dancer in enumerate(active_dancers):
-                self.dancers[dancer]["style_embedding"] = {
-                    "x": float(components[idx][0]),
-                    "y": float(components[idx][1])
-                }
+            # UMAP calculation has been moved to src/app.py for interactive tuning
             
             self.save()
-            logger.info(f"Updated style embeddings & similarities for {len(active_dancers)} dancers.")
+            logger.info(f"Updated similarities for {len(active_dancers)} dancers.")
         except Exception as e:
-            logger.error(f"Failed to update style embeddings: {e}")
+            logger.error(f"Failed to update similarities: {e}")
 
     def merge_dancers(self, source_name: str, target_name: str):
         if source_name not in self.dancers or source_name == target_name:
