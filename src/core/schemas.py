@@ -9,7 +9,8 @@ class Music(BaseModel):
     orchestra: Optional[str] = Field(None, description="The orchestra, band, or artist performing the music (e.g., 'Juan D\'Arienzo', 'Osvaldo Pugliese', 'Color Tango').")
     song: Optional[str] = Field(None, description="The title of the song.")
     singer: Optional[str] = Field(None, description="The singer (cantor) if mentioned (e.g. 'Alberto Echagüe').")
-    style: Optional[Literal["tango", "milonga", "vals", "alternative", "electronic"]] = Field(None, description="The style of the music.")
+    style: Optional[Literal["tango", "milonga", "vals"]] = Field(None, description="The rhythm of the music.")
+    genre: Optional[Literal["golden_age", "modern_traditional", "fantasia", "electronic_neo", "alternative"]] = Field(None, description="The broad genre/era. 'golden_age' (1930s-50s classics), 'modern_traditional' (current orchestras playing traditional style), 'fantasia' (Piazzolla, dramatic), 'electronic_neo' (Gotan, beats), 'alternative' (non-tango music).")
 
 class Event(BaseModel):
     name: Optional[str] = Field(None, description="The name of the festival, marathon, or organizer (e.g. 'CITA', 'Tango Element', 'Torino Tango Festival').")

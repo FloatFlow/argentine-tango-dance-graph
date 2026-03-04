@@ -118,7 +118,7 @@ async def process_video(
         thumbnail = details.get('thumbnail', '')
         
         async with graph_lock:
-            graph_store.add_video(video_id, content, title, duration, thumbnail)
+            graph_store.add_video(video_id, content, title, duration, thumbnail, tags=tags)
 
         # 5. Feed the Flywheel (CRITICAL SECTION - WRITE)
         if content.performances:
@@ -165,23 +165,30 @@ async def run_maintenance(graph_store: GraphStore, resolver: EntityResolver, llm
 
     event_names = set()
     video_names = set()
+    tag_names = set()
     for vid_data in graph_store.videos.values():
         if vid_data.get('event') and vid_data['event'].get('name'):
             event_names.add(vid_data['event']['name'])
         if vid_data.get('videographer'):
             video_names.add(vid_data['videographer'])
+        if vid_data.get('tags'):
+            for t in vid_data['tags']:
+                tag_names.add(t)
             
     if event_names:
         await resolver.run_deduplication(list(event_names), "events", llm_client)
     if video_names:
         await resolver.run_deduplication(list(video_names), "videographers", llm_client)
+    if tag_names:
+        await resolver.run_deduplication(list(tag_names), "tags", llm_client)
 
     # 2. Normalize Graph
     # This applies the aliases we just found to the video records and rebuilds the dancer index
     graph_store.normalize_graph(resolver=resolver)
 
     # 3. Update Embeddings (on the clean index)
-    graph_store.update_style_embeddings()
+    # Now async and requires llm_client for dense embeddings
+    await graph_store.update_style_embeddings(llm_client=llm_client)
     
     stats = queue_manager.get_population_estimate()
     logger.success(f"--- Population Status ---")
@@ -236,7 +243,8 @@ async def main(video_delay: int = 5, query_delay: int = 10, search_limit: int = 
 
     query_counter = 0
     while True:
-        if query_counter > 0 and query_counter % maintenance_interval == 0:
+        # Run maintenance immediately on startup (0) and then every N cycles
+        if query_counter % maintenance_interval == 0:
             await run_maintenance(graph_store, resolver, llm_client, queue_manager)
 
         async with queue_lock:

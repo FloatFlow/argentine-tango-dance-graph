@@ -23,3 +23,13 @@ Your task is to extract structured metadata from YouTube video information (titl
         *   *Bad*: "10th Tango Fiesta Patras 2018"
         *   *Good*: "Tango Fiesta Patras"
     *   The Channel Name is often the organizer (e.g., "030tango" is a filmer, but "Torino Tango Festival" is the event channel).
+
+4.  **Music Metadata**:
+    *   **Orchestra**: Identify the performing orchestra or artist.
+    *   **Genre Classifications**:
+        *   `golden_age`: Classic orchestras (1930s-50s) like D'Arienzo, Di Sarli, Troilo, Pugliese, Biagi.
+        *   `modern_traditional`: Current bands playing classic style (Color Tango, Sexteto Milonguero, Romantica Milonguera).
+        *   `fantasia`: Dramatic/Stage music, often Piazzolla, Sexteto Mayor, or Forever Tango.
+        *   `electronic_neo`: Electronic beats, fusion, or alternative (Gotan Project, Bajofondo, Otros Aires).
+        *   `alternative`: Non-tango music used for tango (e.g. pop, blues, trip-hop).
+    *   **Style**: Identify if it is Tango, Milonga, or Vals.
