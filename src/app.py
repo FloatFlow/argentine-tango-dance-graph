@@ -1,21 +1,11 @@
 import streamlit as st
 import json
 import os
+import random
 from collections import Counter
 import pandas as pd
 import numpy as np
 import plotly.express as px
-
-# --- Heavy Imports for Explorer Mode ---
-# We import these globally so they are available, 
-# but the heavy lifting only happens if Explorer Mode is active.
-import umap
-from sklearn.feature_extraction.text import TfidfTransformer
-from sklearn.preprocessing import normalize
-from sklearn.cluster import HDBSCAN
-from scipy.sparse import csr_matrix, hstack
-import colorsys
-import matplotlib.colors
 
 # Page Config
 st.set_page_config(
@@ -71,7 +61,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- Data Loading ---
-@st.cache_data
+@st.cache_resource(ttl=3600)
 def load_data():
     db_path = "graph_db.json"
     if not os.path.exists(db_path):
@@ -85,17 +75,7 @@ def load_data():
         st.error(f"Failed to load database: {e}")
         return {"videos": {}, "dancers": {}, "stats": {}}
 
-@st.cache_data
-def load_features():
-    feat_path = "feature_embeddings.json"
-    if not os.path.exists(feat_path):
-        return {}
-    try:
-        with open(feat_path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return {}
-
+@st.cache_data(ttl=5)
 def load_queue_state():
     state_path = "queue_state.json"
     if not os.path.exists(state_path):
@@ -107,215 +87,6 @@ def load_queue_state():
         return {"queue": [], "video_sightings": []}
 
 # --- Atlas Generators ---
-
-@st.cache_data
-def get_static_atlas(dancers_data):
-    """
-    Fast path: Reads pre-computed UMAP coordinates from graph_db.json.
-    """
-    grouped_points = {}
-    color_map = {}
-    
-    for name, info in dancers_data.items():
-        embedding = info.get("style_embedding")
-        if not embedding or "x" not in embedding:
-            continue
-            
-        if "cluster" in embedding and "color" in embedding:
-            color_map[embedding["cluster"]] = embedding["color"]
-            
-        key = (round(embedding["x"], 4), round(embedding["y"], 4))
-        if key not in grouped_points:
-            grouped_points[key] = []
-        
-        grouped_points[key].append({
-            "name": name,
-            "videos": len(info.get("videos", [])),
-            "x": embedding["x"],
-            "y": embedding["y"],
-            "cluster": embedding.get("cluster", "0")
-        })
-    
-    return _flatten_atlas_groups(grouped_points, color_map)
-
-@st.cache_data(show_spinner=False)
-def compute_dynamic_atlas(dancers_data, _feature_embeddings, 
-                        w_social=1.0, w_music=3.0, w_tags=0.5, 
-                        n_neighbors=30, min_dist=0.5, 
-                        min_cluster_size=15, cluster_epsilon=0.0):
-    """
-    Explorer Mode: Re-runs the Multi-Modal Hybrid Fusion Pipeline on the fly.
-    Implements LATE FUSION: Calculates similarity matrices separately per modality,
-    then averages them. This ensures exact weight control regardless of dimension count.
-    """
-    from sklearn.metrics.pairwise import cosine_similarity
-    
-    active_dancers = [d for d, info in dancers_data.items() if len(info.get('videos', [])) > 1]
-    if len(active_dancers) < 10:
-        return pd.DataFrame(), {}
-
-    # Init Progress
-    progress_bar = st.progress(0, text="Preparing data structures...")
-    n_dancers = len(active_dancers)
-
-    # --- 1. Prepare Feature Maps ---
-    all_partners = set()
-    all_events = set()
-    
-    for d in active_dancers:
-        d_data = dancers_data[d]
-        all_partners.update(d_data.get("partners", {}).keys())
-        all_events.update(d_data.get("events", {}).keys())
-    
-    map_partners = {name: i for i, name in enumerate(sorted(list(all_partners)))}
-    map_events = {name: i for i, name in enumerate(sorted(list(all_events)))}
-
-    progress_bar.progress(10, text="Building structural matrix...")
-
-    # --- 2. Sparse Structural Matrix (Social) ---
-    def build_sparse(feature_map, category_key):
-        rows, cols, data = [], [], []
-        for r_idx, d in enumerate(active_dancers):
-            counts = dancers_data[d].get(category_key, {})
-            for feat, count in counts.items():
-                if feat in feature_map:
-                    rows.append(r_idx)
-                    cols.append(feature_map[feat])
-                    data.append(count)
-        
-        if not rows:
-            return csr_matrix((n_dancers, len(feature_map)))
-            
-        mat = csr_matrix((data, (rows, cols)), shape=(n_dancers, len(feature_map)))
-        return TfidfTransformer().fit_transform(mat)
-
-    mat_partners = build_sparse(map_partners, "partners")
-    mat_events = build_sparse(map_events, "events")
-    
-    # Stack Partners & Events for the "Social" Dimension
-    # Events get 2x weight relative to Partners internally
-    mat_social = hstack([mat_partners, mat_events * 2.0])
-
-    progress_bar.progress(30, text="Building semantic matrix...")
-
-    # --- 3. Dense Semantic Matrices (Music & Tags) ---
-    # Pre-convert lists to numpy arrays for fast lookup
-    feature_lookup = {k: np.array(v, dtype=np.float32) for k, v in _feature_embeddings.items()}
-    embedding_dim = 768
-    if feature_lookup:
-        embedding_dim = len(next(iter(feature_lookup.values())))
-
-    def build_dense(category_key):
-        vectors = []
-        for d in active_dancers:
-            d_data = dancers_data[d]
-            counts = d_data.get(category_key, {})
-            vec = np.zeros(embedding_dim, dtype=np.float32)
-            total_w = 0.0
-            for term, count in counts.items():
-                if term in feature_lookup:
-                    vec += feature_lookup[term] * count
-                    total_w += count
-            
-            if total_w > 0:
-                vec /= total_w
-            vectors.append(vec)
-        
-        mat = np.array(vectors)
-        return normalize(mat, axis=1)
-
-    mat_orchestras = build_dense("orchestras")
-    mat_tags = build_dense("tags")
-
-    progress_bar.progress(50, text="Calculating Similarity Matrices...")
-
-    # --- 4. Late Fusion (Weighted Similarity) ---
-    # Calculate similarities independently
-    sim_social = cosine_similarity(mat_social)
-    sim_music = cosine_similarity(mat_orchestras)
-    sim_tags = cosine_similarity(mat_tags)
-    
-    # Weighted Average
-    # Avoid division by zero
-    total_weight = w_social + w_music + w_tags
-    if total_weight == 0:
-        total_weight = 1.0
-        
-    final_sim = (
-        (sim_social * w_social) +
-        (sim_music * w_music) +
-        (sim_tags * w_tags)
-    ) / total_weight
-
-    # --- 5. Similarity -> Distance ---
-    dist_matrix = 1.0 - final_sim
-    dist_matrix[dist_matrix < 0] = 0.0 # Clamp
-    
-    progress_bar.progress(80, text="Running UMAP (on Precomputed Distance)...")
-
-    # --- 6. UMAP ---
-    reducer = umap.UMAP(
-        n_neighbors=n_neighbors, 
-        n_components=2, 
-        min_dist=min_dist, 
-        metric='precomputed', 
-        n_jobs=-1 
-    )
-    coords = reducer.fit_transform(dist_matrix)
-    
-    # --- 7. Clustering ---
-    progress_bar.progress(95, text="Clustering points...")
-    
-    # Cast to float64 to ensure HDBSCAN stability
-    coords = coords.astype(np.float64)
-    
-    # Removed cluster_selection_epsilon to prevent stability issues
-    hdb = HDBSCAN(min_cluster_size=min_cluster_size, min_samples=2)
-    cluster_labels = hdb.fit_predict(coords)
-    cluster_labels_str = [str(c) for c in cluster_labels]
-    
-    # --- 8. Formatting ---
-    grouped_points = {}
-    color_map = _generate_golden_palette(cluster_labels_str, coords)
-    
-    for idx, name in enumerate(active_dancers):
-        x, y = coords[idx][0], coords[idx][1]
-        lbl = cluster_labels_str[idx]
-        
-        key = (round(x, 4), round(y, 4))
-        if key not in grouped_points: grouped_points[key] = []
-        
-        grouped_points[key].append({
-            "name": name,
-            "videos": len(dancers_data[name].get("videos", [])),
-            "x": float(x), "y": float(y),
-            "cluster": lbl
-        })
-        
-    progress_bar.empty()
-    return _flatten_atlas_groups(grouped_points, color_map)
-
-def _generate_golden_palette(labels, coords):
-    unique = sorted(list(set(labels)))
-    if '-1' in unique: unique.remove('-1')
-    
-    centroids = []
-    for c in unique:
-        indices = [i for i, lbl in enumerate(labels) if lbl == c]
-        avg_x = np.mean(coords[indices, 0])
-        centroids.append((c, avg_x))
-    centroids.sort(key=lambda x: x[1])
-    sorted_lbls = [x[0] for x in centroids]
-    
-    palette = {'-1': '#7f7f7f'}
-    golden_ratio = 0.618033988749895
-    for i, lbl in enumerate(sorted_lbls):
-        h = (0.0 + i * golden_ratio) % 1.0
-        l = 0.45 if i % 2 == 0 else 0.65
-        s = 0.85 if i % 2 == 0 else 0.75
-        rgb = colorsys.hls_to_rgb(h, l, s)
-        palette[lbl] = matplotlib.colors.to_hex(rgb)
-    return palette
 
 def _flatten_atlas_groups(grouped_points, color_map):
     plot_data = []
@@ -347,22 +118,54 @@ def _flatten_atlas_groups(grouped_points, color_map):
     return df, color_map
 
 @st.cache_data
-def get_library_data(videos_data):
+def get_static_atlas(_dancers_data, _version_id=None):
+    """
+    Fast path: Reads pre-computed UMAP coordinates from graph_db.json.
+    """
+    grouped_points = {}
+    color_map = {}
+
+    for name, info in _dancers_data.items():
+        embedding = info.get("style_embedding")
+        if not embedding or "x" not in embedding:
+            continue
+
+        if "cluster" in embedding and "color" in embedding:
+            color_map[embedding["cluster"]] = embedding["color"]
+
+        key = (round(embedding["x"], 4), round(embedding["y"], 4))
+        if key not in grouped_points:
+            grouped_points[key] = []
+
+        grouped_points[key].append({
+            "name": name,
+            "videos": len(info.get("videos", [])),
+            "x": embedding["x"],
+            "y": embedding["y"],
+            "cluster": embedding.get("cluster", "0")
+        })
+
+    return _flatten_atlas_groups(grouped_points, color_map)
+
+@st.cache_data
+def get_library_data(_videos_data, _version_id=None):
     """
     Flattens video dictionary into a DataFrame for the Library tab.
     """
-    if not videos_data:
+    if not _videos_data:
         return pd.DataFrame()
 
     rows = []
-    for vid_id, data in videos_data.items():
+    for vid_id, data in _videos_data.items():
         orchestra = None
-        if data.get("music") and data.get("music", {}).get("orchestra"):
-            orchestra = data["music"]["orchestra"]
+        music_data = data.get("music") or {}
+        if music_data.get("orchestra"):
+            orchestra = music_data["orchestra"]
             
         event = None
-        if data.get("event") and data.get("event", {}).get("name"):
-            event = data["event"]["name"]
+        event_data = data.get("event") or {}
+        if event_data.get("name"):
+            event = event_data["name"]
             
         dancers_list = []
         if data.get("performances"):
@@ -380,7 +183,7 @@ def get_library_data(videos_data):
             "title": data.get("title", "Untitled"),
             "orchestra": orchestra or "Unknown",
             "event": event or "Unknown",
-            "year": (data.get("event") or {}).get("year"),
+            "year": event_data.get("year"),
             "videographer": data.get("videographer", "Unknown"),
             "dancers": ", ".join(dancers_list),
             "url": data.get("url"),
@@ -395,7 +198,6 @@ data = load_data()
 videos = data.get("videos", {})
 dancers = data.get("dancers", {})
 stats = data.get("stats", {})
-features = load_features()
 queue_state = load_queue_state()
 
 # --- Helper Functions ---
@@ -418,9 +220,10 @@ def show_search_modal(all_names):
         placeholder="Name..."
     )
 
-    if selected:
-        st.session_state["selected_dancer"] = selected
-        st.rerun()
+    if st.button("Locate", type="primary", use_container_width=True):
+        if selected:
+            st.session_state.selected_dancer = selected
+            st.rerun()
 
 # --- Modal: Watch Video (Performance) ---
 @st.dialog("Now Playing", width="large")
@@ -452,7 +255,9 @@ def show_dancer_details(dancer_name):
                     score = item.get("score", 0)
                     with sim_cols[idx % 2]:
                         if st.button(f"{name} ({score:.2f})", key=f"modal_sim_{name}", use_container_width=True):
-                            st.session_state["selected_dancer"] = name
+                            st.session_state.selected_dancer = name
+                            # Reset playing videos when switching context
+                            st.session_state.playing_videos = set()
                             st.rerun()
             else:
                 st.caption("No similar dancers found.")
@@ -460,14 +265,28 @@ def show_dancer_details(dancer_name):
         st.divider()
         st.subheader("Performance History")
         video_ids = info.get("videos", [])
+
+        # Initialize playing state for this session
+        if "playing_videos" not in st.session_state:
+            st.session_state.playing_videos = set()
+
         v_cols = st.columns(2)
         for i, vid_id in enumerate(video_ids):
             v = videos.get(vid_id)
             if not v: continue
             with v_cols[i % 2]:
                 with st.container(border=True):
-                    if v.get("url"):
-                        st.video(v["url"])
+                    # Optimized Loading: Thumbnail first, Video on demand
+                    if vid_id in st.session_state.playing_videos:
+                        if v.get("url"):
+                            st.video(v["url"])
+                    else:
+                        thumb = v.get("thumbnail") or f"https://img.youtube.com/vi/{vid_id}/mqdefault.jpg"
+                        st.image(thumb, use_container_width=True)
+                        if st.button("▶️ Play", key=f"profile_play_{vid_id}", use_container_width=True):
+                            st.session_state.playing_videos.add(vid_id)
+                            st.rerun()
+
                     event_data = v.get('event') or {}
                     event_name = event_data.get('name', 'Unknown Event')
                     title = v.get('title', 'Untitled')
@@ -478,45 +297,16 @@ def show_dancer_details(dancer_name):
 st.markdown("### 🇦🇷 TangoGraph")
 
 # Top-level Tabs
-tab_atlas, tab_library, tab_dashboard = st.tabs(["Style Atlas", "Video Library", "Dashboard"])
+tab_atlas, tab_library, tab_dashboard, tab_random = st.tabs(["Style Atlas", "Video Library", "Dashboard", "Random"])
 
 # --- TAB 1: STYLE ATLAS ---
 with tab_atlas:
-    # Tuning Controls
-    with st.expander("⚙️ Hyperparameter Explorer", expanded=False):
-        st.caption("Tweak weights to regenerate the graph in real-time. Uncheck 'Explorer Mode' to use pre-computed fast graph.")
-        c_mode, _ = st.columns(2)
-        explorer_mode = c_mode.checkbox("Enable Explorer Mode", value=False)
-        
-        if explorer_mode:
-            c1, c2, c3 = st.columns(3)
-            w_social = c1.slider("Social Weight (Partners/Events)", 0.1, 5.0, 3.0, help="Community structure based on who dances with whom.")
-            w_music = c2.slider("Music Weight (Orchestras)", 0.1, 10.0, 1.0, help="Semantic style based on music choice.")
-            w_tags = c3.slider("Tags Weight", 0.0, 5.0, 0.0, help="Noisy but descriptive tags.")
-            
-            c4, c5 = st.columns(2)
-            n_neighbors = c4.slider("UMAP Neighbors", 5, 200, 100)
-            min_dist = c5.slider("UMAP Min Dist", 0.0, 1.0, 0.5)
-            
-            c6, c7 = st.columns(2)
-            min_cluster_size = c6.slider("Min Cluster Size", 5, 100, 20, help="Increase to merge micro-clusters into larger groups.")
-            cluster_epsilon = c7.slider("Merge Distance (Epsilon)", 0.0, 1.0, 0.2, help="Merge clusters closer than this distance.")
-        else:
-            # Defaults for variable scope matching user preference
-            w_social, w_music, w_tags = 3.0, 1.0, 0.0
-            n_neighbors, min_dist = 100, 0.5
-            min_cluster_size, cluster_epsilon = 15, 0.0
-
-    if explorer_mode and len(features) > 0:
-        df, color_map = compute_dynamic_atlas(dancers, features, w_social, w_music, w_tags, n_neighbors, min_dist, min_cluster_size, cluster_epsilon)
-    else:
-        if explorer_mode and len(features) == 0:
-            st.warning("Feature embeddings not found. Please run backend maintenance first. Falling back to static graph.")
-        df, color_map = get_static_atlas(dancers)
+    df, color_map = get_static_atlas(dancers, id(dancers))
     
     if df.empty:
         st.warning("No style embeddings found. Please wait for the backend maintenance cycle to populate them.")
     else:
+        st.caption("A map of the tango world based on youtube performance history. Dancers who attend the same events or perform to similar music appear closer together.")
         # --- Controls Row ---
         c_search, c_info = st.columns([1, 5])
         with c_search:
@@ -526,7 +316,12 @@ with tab_atlas:
         with c_info:
             active_dancer = st.session_state.get("selected_dancer", None)
             if active_dancer:
-                st.info(f"Selected: **{active_dancer}** (Click dot for details)", icon="📍")
+                col_i1, col_i2 = st.columns([5, 1])
+                with col_i1:
+                    st.info(f"Selected: **{active_dancer}**", icon="📍")
+                with col_i2:
+                    if st.button("Profile", key="btn_open_profile", use_container_width=True):
+                        show_dancer_details(active_dancer)
 
         # --- Plot ---
         df['status'] = df['name'].apply(lambda x: 'Selected' if x == active_dancer else 'Normal')
@@ -543,7 +338,8 @@ with tab_atlas:
             color_discrete_map=color_map,
             hover_data=['name', 'videos'],
             height=550,
-            custom_data=['name']
+            custom_data=['name'],
+            render_mode='webgl' # Optimization: 10x faster rendering
         )
         
         fig.update_traces(
@@ -573,18 +369,37 @@ with tab_atlas:
         # Auto-Centering
         x_range = None
         y_range = None
+
         if active_dancer:
             target_row = df[df['name'] == active_dancer]
             if not target_row.empty:
                 tx = target_row.iloc[0]['x']
                 ty = target_row.iloc[0]['y']
+                # Dynamic zoom based on global scale
                 total_x = df['x'].max() - df['x'].min()
                 total_y = df['y'].max() - df['y'].min()
-                delta_x = max(total_x * 0.05, 1.0) 
-                delta_y = max(total_y * 0.05, 1.0)
+                delta_x = max(total_x * 0.05, 1.5)
+                delta_y = max(total_y * 0.05, 1.5)
 
                 x_range = [tx - delta_x, tx + delta_x]
                 y_range = [ty - delta_y, ty + delta_y]
+        else:
+            # Default view: Center on "Center of Mass" (Mean) rather than bounding box center
+            if not df.empty:
+                centroid_x = df['x'].mean()
+                centroid_y = df['y'].mean()
+
+                # Use std dev to determine zoom level, excluding extreme outliers
+                # 2.5 std devs covers ~98% of data in normal dist, good for showing the main cluster
+                std_x = df['x'].std()
+                std_y = df['y'].std()
+
+                # Fallback span if std is tiny
+                span_x = (std_x * 2.5) if std_x > 0.5 else 5.0
+                span_y = (std_y * 2.5) if std_y > 0.5 else 5.0
+
+                x_range = [centroid_x - span_x, centroid_x + span_x]
+                y_range = [centroid_y - span_y, centroid_y + span_y]
 
         fig.update_layout(
             clickmode='event+select',
@@ -609,16 +424,22 @@ with tab_atlas:
 
         if selection and selection.get("selection") and len(selection["selection"]["points"]) > 0:
             clicked_name = selection["selection"]["points"][0]["customdata"][0]
-            st.session_state["selected_dancer"] = clicked_name
-            st.session_state["show_modal"] = True
-            st.rerun()
+            # Prevent "Ghost Modal": Only open if selection actually changed from current state.
+            if clicked_name != st.session_state.get("selected_dancer"):
+                st.session_state.selected_dancer = clicked_name
+                st.session_state.show_modal = True
+                st.rerun()
         
+        # Handle modal display
         if st.session_state.get("show_modal", False) and active_dancer:
             show_dancer_details(active_dancer)
+            # Reset modal state to prevent infinite loops if logic requires,
+            # but st.dialog handles persistence until dismissed.
+            # We don't manually set False here; closing the dialog triggers a rerun where we won't enter this block if dismissed.
 
 # --- TAB 2: VIDEO LIBRARY ---
 with tab_library:
-    df_videos = get_library_data(videos)
+    df_videos = get_library_data(videos, id(videos))
     if df_videos.empty:
         st.info("No videos found yet.")
     else:
@@ -745,3 +566,56 @@ with tab_dashboard:
                 st.json(queue_list[:10])
         else:
             st.info("Queue is empty.")
+# --- TAB 4: RANDOM ---
+with tab_random:
+    # Filter for videos that actually have identified dancers
+    candidate_ids = [
+        vid_id for vid_id, data in videos.items()
+        if (data.get("performances") and any(p.get("dancers") for p in data["performances"]))
+        or data.get("dancers")
+    ]
+
+    if not candidate_ids:
+        st.info("No videos with identified dancers found.")
+    else:
+        c_rand_vid, c_rand_info = st.columns([2, 1])
+
+        # Initialize session state for random video if not present
+        if "random_video_id" not in st.session_state:
+            st.session_state["random_video_id"] = random.choice(candidate_ids)
+
+        with c_rand_info:
+            st.markdown("### Serendipity")
+            if st.button("🎲 Shuffle Video", type="primary", use_container_width=True):
+                st.session_state["random_video_id"] = random.choice(candidate_ids)
+
+            vid_id = st.session_state["random_video_id"]
+            vid_data = videos.get(vid_id, {})
+
+            st.divider()
+            st.markdown(f"**{vid_data.get('title', 'Untitled')}**")
+
+            # Extract Metadata
+            dancers_list = []
+            if vid_data.get("performances"):
+                for p in vid_data["performances"]:
+                    dancers_list.extend([d.get("name") for d in p.get("dancers", [])])
+
+            st.markdown(f"**💃 Dancers:** {', '.join(dancers_list) or 'Unknown'}")
+
+            # Safe Access for Nested Objects
+            event_name = (vid_data.get('event') or {}).get('name', 'Unknown')
+            st.markdown(f"**📍 Event:** {event_name}")
+
+            music_data = vid_data.get('music') or {}
+            orch_name = music_data.get('orchestra', 'Unknown')
+            st.markdown(f"**🎻 Music:** {orch_name}")
+
+            tags = vid_data.get("tags", [])
+            if tags:
+                st.caption(f"Tags: {', '.join(tags[:5])}")
+
+        with c_rand_vid:
+            if vid_id:
+                url = vid_data.get("url", f"https://www.youtube.com/watch?v={vid_id}")
+                st.video(url)
