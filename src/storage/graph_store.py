@@ -283,59 +283,72 @@ class GraphStore:
 
     async def update_style_embeddings(self, llm_client=None):
         """
-        Hybrid Analytics Pipeline:
-        1. Sparse Structural Features (TF-IDF on Partners/Events)
-        2. Dense Semantic Features (Weighted Average of Music/Tags Embeddings)
-        3. Fusion & UMAP
+        Multi-Modal Fusion Pipeline (Late Fusion):
+        Calculates similarity matrices separately per modality, then averages them.
+        Optimized with user-selected hyperparameters:
+        - Social: 5.0 (Partners 1.66, Events 3.33)
+        - Music: 1.0
+        - Tags: 0.0
+        - UMAP: Neighbors 120, Min Dist 0.5, Spread 1.0
+        - HDBSCAN: Min Size 18, Epsilon 0.1
         """
+        from scipy.sparse import csr_matrix
+        from sklearn.preprocessing import normalize
+        from sklearn.metrics.pairwise import cosine_similarity
+
         all_dancers = list(self.dancers.keys())
+        # Filter for active dancers to reduce noise (must have > 1 video)
         active_dancers = [d for d in all_dancers if len(self.dancers[d].get('videos', [])) > 1]
 
         if len(active_dancers) < 10:
             return
         
         try:
-            logger.info(f"Starting Hybrid Analytics Update for {len(active_dancers)} dancers...")
+            logger.info(f"Starting Late Fusion Analytics for {len(active_dancers)} dancers...")
 
-            # --- PART A: Structural Features (Sparse) ---
-            struct_features_set = set()
-            for d in active_dancers:
-                struct_features_set.update(self.dancers[d].get("partners", {}).keys())
-                struct_features_set.update(self.dancers[d].get("events", {}).keys())
-            
-            struct_features_list = sorted(list(struct_features_set))
-            struct_map = {name: i for i, name in enumerate(struct_features_list)}
-            n_struct = len(struct_features_list)
-            
-            rows, cols, data = [], [], []
-            for row_idx, dancer in enumerate(active_dancers):
-                d_data = self.dancers[dancer]
-                for p, count in d_data.get("partners", {}).items():
-                    if p in struct_map:
-                        rows.append(row_idx)
-                        cols.append(struct_map[p])
-                        data.append(count * 1.0)
-                for e, count in d_data.get("events", {}).items():
-                    if e in struct_map:
-                        rows.append(row_idx)
-                        cols.append(struct_map[e])
-                        data.append(count * 1.5)
-            
-            sparse_struct = csr_matrix((data, (rows, cols)), shape=(len(active_dancers), n_struct))
-            tfidf = TfidfTransformer()
-            tfidf_struct = tfidf.fit_transform(sparse_struct)
-            
-            # --- PART B: Semantic Features (Dense) ---
-            # Identify unique terms to embed
+            # --- 1. Prepare Feature Maps ---
+            all_partners = set()
+            all_events = set()
             all_orchestras = set()
             all_tags = set()
+
             for d in active_dancers:
-                all_orchestras.update(self.dancers[d].get("orchestras", {}).keys())
-                all_tags.update(self.dancers[d].get("tags", {}).keys())
-            
+                d_data = self.dancers[d]
+                all_partners.update(d_data.get("partners", {}).keys())
+                all_events.update(d_data.get("events", {}).keys())
+                all_orchestras.update(d_data.get("orchestras", {}).keys())
+                all_tags.update(d_data.get("tags", {}).keys())
+
+            # Create sorted maps for stable indexing
+            map_partners = {name: i for i, name in enumerate(sorted(list(all_partners)))}
+            map_events = {name: i for i, name in enumerate(sorted(list(all_events)))}
+
+            n_dancers = len(active_dancers)
+
+            # --- 2. Build Sparse Matrices (Structure) ---
+            def build_sparse(feature_map, category_key):
+                rows, cols, data = [], [], []
+                for r_idx, d in enumerate(active_dancers):
+                    counts = self.dancers[d].get(category_key, {})
+                    for feat, count in counts.items():
+                        if feat in feature_map:
+                            rows.append(r_idx)
+                            cols.append(feature_map[feat])
+                            data.append(count)
+
+                if not rows:
+                    return csr_matrix((n_dancers, len(feature_map)))
+
+                mat = csr_matrix((data, (rows, cols)), shape=(n_dancers, len(feature_map)))
+                # TF-IDF Transform (Local Weighting)
+                return TfidfTransformer().fit_transform(mat)
+
+            mat_partners = build_sparse(map_partners, "partners")
+            mat_events = build_sparse(map_events, "events")
+
+            # --- 3. Build Dense Matrices (Semantics) ---
+            # Ensure embeddings are cached
             semantic_terms = all_orchestras.union(all_tags)
-            
-            # Check Cache
             terms_to_fetch = [t for t in semantic_terms if t not in self.feature_embeddings]
             
             if terms_to_fetch and llm_client:
@@ -343,71 +356,76 @@ class GraphStore:
                 for term in terms_to_fetch:
                     if len(term) < 2: continue
                     try:
-                        # Create a semantic label for better embedding (e.g. "Tango Orchestra: D'Arienzo")
-                        # But simpler is often better for general tags. Let's stick to raw term.
                         emb = await llm_client.get_embedding(term)
                         if emb:
                             self.feature_embeddings[term] = emb
                     except Exception as e:
                         logger.warning(f"Failed to embed '{term}': {e}")
                 self.save_feature_cache()
-            
+
             embedding_dim = 768
             if self.feature_embeddings:
                 embedding_dim = len(next(iter(self.feature_embeddings.values())))
-            
-            # Build Separate Dense Matrices
-            music_vectors = []
-            tag_vectors = []
-            
-            for dancer in active_dancers:
-                d_data = self.dancers[dancer]
-                
-                # 1. Music Vector (High Quality)
-                vec_m = np.zeros(embedding_dim)
-                w_m = 0.0
-                for o, count in d_data.get("orchestras", {}).items():
-                    if o in self.feature_embeddings:
-                        emb = np.array(self.feature_embeddings[o])
-                        vec_m += emb * count
-                        w_m += count
-                if w_m > 0: vec_m /= w_m
-                music_vectors.append(vec_m)
-                
-                # 2. Tag Vector (Noisy)
-                vec_t = np.zeros(embedding_dim)
-                w_t = 0.0
-                for t, count in d_data.get("tags", {}).items():
-                    if t in self.feature_embeddings:
-                        emb = np.array(self.feature_embeddings[t])
-                        vec_t += emb * count
-                        w_t += count
-                if w_t > 0: vec_t /= w_t
-                tag_vectors.append(vec_t)
 
-            mat_music = np.array(music_vectors)
-            mat_tags = np.array(tag_vectors)
-            
-            # Normalize before weighting
-            mat_music = normalize(mat_music, axis=1)
-            mat_tags = normalize(mat_tags, axis=1)
-            
-            # --- PART C: Fusion ---
-            struct_dense = tfidf_struct.toarray()
-            
-            # Weighted Stacking
-            # Structure: 1.0 (Implicit via TF-IDF scaling)
-            # Music: 3.0 (Strong Style Gravity)
-            # Tags: 0.5 (Weak context)
-            final_matrix = np.hstack([
-                struct_dense, 
-                mat_music * 3.0, 
-                mat_tags * 0.5
-            ])
-            
-            # --- Similarity & UMAP ---
-            sim_matrix = cosine_similarity(final_matrix)
-            
+            # Pre-convert cache to numpy for speed
+            feature_lookup = {k: np.array(v, dtype=np.float32) for k, v in self.feature_embeddings.items()}
+
+            def build_dense(category_key):
+                vectors = []
+                for d in active_dancers:
+                    d_data = self.dancers[d]
+                    counts = d_data.get(category_key, {})
+                    vec = np.zeros(embedding_dim, dtype=np.float32)
+                    total_w = 0.0
+
+                    for term, count in counts.items():
+                        if term in feature_lookup:
+                            vec += feature_lookup[term] * count
+                            total_w += count
+
+                    if total_w > 0:
+                        vec /= total_w
+                    vectors.append(vec)
+                
+                mat = np.array(vectors)
+                return normalize(mat, axis=1)
+
+            mat_orchestras = build_dense("orchestras")
+            mat_tags = build_dense("tags")
+
+            # --- 4. Late Fusion (Weighted Similarity) ---
+            # Weights selected by user via Explorer
+            W_SOCIAL = 5.0
+            W_MUSIC = 1.0
+            W_TAGS = 0.0
+
+            # Social split: 1/3 Partners, 2/3 Events
+            w_partners = W_SOCIAL / 3.0
+            w_events = W_SOCIAL * 2.0 / 3.0
+
+            # Calculate Similarities independently
+            logger.info("Calculating Similarity Matrices...")
+            sim_partners = cosine_similarity(mat_partners)
+            sim_events = cosine_similarity(mat_events)
+            sim_orchestras = cosine_similarity(mat_orchestras)
+
+            if W_TAGS > 0:
+                sim_tags = cosine_similarity(mat_tags)
+            else:
+                sim_tags = 0.0
+
+            # Weighted Average of Similarity Matrices (Not Features)
+            total_weight = W_SOCIAL + W_MUSIC + W_TAGS
+            if total_weight == 0: total_weight = 1.0
+
+            sim_matrix = (
+                (sim_partners * w_partners) +
+                (sim_events * w_events) +
+                (sim_orchestras * W_MUSIC) +
+                (sim_tags * W_TAGS)
+            ) / total_weight
+
+            # Update Neighbors (using the final weighted similarity)
             for i, dancer_name in enumerate(active_dancers):
                 row_sims = sim_matrix[i]
                 k = 6
@@ -422,21 +440,32 @@ class GraphStore:
                 scores.sort(key=lambda x: x["score"], reverse=True)
                 self.dancers[dancer_name]["similar_dancers"] = scores[:5]
 
+            # --- 6. UMAP Layout ---
+            # Explicitly calculating distance to ensure metric stability
+            dist_matrix = 1.0 - sim_matrix
+            dist_matrix[dist_matrix < 0] = 0.0
+
+            logger.info("Running UMAP...")
             reducer = umap.UMAP(
-                n_neighbors=30, 
+                n_neighbors=120,
                 n_components=2, 
                 min_dist=0.5, 
-                spread=5.0,
-                metric='cosine',
-                init='random',
-                random_state=42
+                metric='precomputed',
+                n_jobs=-1 # Use all cores (no random_state for parallelism)
             )
-            coords = reducer.fit_transform(final_matrix)
+            coords = reducer.fit_transform(dist_matrix)
             
-            hdb = HDBSCAN(min_cluster_size=6, min_samples=2)
+            # --- 7. Clustering ---
+            logger.info("Clustering...")
+            # Ensure contiguous float64 array for C-extension stability
+            coords = np.ascontiguousarray(coords, dtype=np.float64)
+
+            # Removed cluster_selection_epsilon to prevent sklearn TypeError
+            hdb = HDBSCAN(min_cluster_size=20, min_samples=2)
             cluster_labels = hdb.fit_predict(coords)
             cluster_labels_str = [str(c) for c in cluster_labels]
             
+            # Colors
             unique_clusters = sorted(list(set(cluster_labels_str)))
             if '-1' in unique_clusters: unique_clusters.remove('-1')
             
@@ -490,10 +519,9 @@ class GraphStore:
             }
             
             self.save()
-            logger.info(f"Updated Hybrid Analytics for {len(active_dancers)} dancers.")
+            logger.info(f"Updated Late Fusion Analytics for {len(active_dancers)} dancers.")
         except Exception as e:
             logger.error(f"Failed to update analytics: {e}")
-
     def merge_dancers(self, source_name: str, target_name: str):
         if source_name not in self.dancers or source_name == target_name:
             return
