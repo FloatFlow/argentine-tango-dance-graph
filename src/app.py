@@ -58,8 +58,11 @@ st.markdown("""
             font-weight: bold;
         }
         /* Allow pinch-to-zoom on Plotly charts instead of browser handling it */
-        .stPlotlyChart {
-            touch-action: none;
+        .stPlotlyChart,
+        .stPlotlyChart > div,
+        .stPlotlyChart > div > div,
+        .stPlotlyChart iframe {
+            touch-action: none !important;
         }
     </style>
 """, unsafe_allow_html=True)
