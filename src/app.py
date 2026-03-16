@@ -429,7 +429,7 @@ with tab_atlas:
         fig.update_layout(
             clickmode='event+select',
             dragmode='pan', 
-            hovermode='closest',
+            hovermode=False,
             showlegend=False,
             xaxis=dict(showgrid=False, zeroline=False, visible=False, range=x_range),
             yaxis=dict(showgrid=False, zeroline=False, visible=False, range=y_range),
