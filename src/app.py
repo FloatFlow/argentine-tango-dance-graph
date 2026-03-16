@@ -330,6 +330,23 @@ with tab_atlas:
                     if st.button("Profile", key="btn_open_profile", use_container_width=True):
                         show_dancer_details(active_dancer)
 
+        # --- Zoom Controls ---
+        if "atlas_zoom" not in st.session_state:
+            st.session_state.atlas_zoom = 1.0
+
+        c_zin, c_zout, c_zreset, _ = st.columns([1, 1, 1, 9])
+        with c_zin:
+            if st.button("➕", key="zoom_in", use_container_width=True):
+                st.session_state.atlas_zoom *= 0.6
+                st.rerun()
+        with c_zout:
+            if st.button("➖", key="zoom_out", use_container_width=True):
+                st.session_state.atlas_zoom /= 0.6
+                st.rerun()
+        with c_zreset:
+            if st.button("↩️", key="zoom_reset", use_container_width=True):
+                st.session_state.atlas_zoom = 1.0
+                st.rerun()
         # --- Plot ---
         df['status'] = df['name'].apply(lambda x: 'Selected' if x == active_dancer else 'Normal')
         df['final_size'] = df.apply(lambda row: 30 if row['name'] == active_dancer else row['size_log'], axis=1)
@@ -376,6 +393,7 @@ with tab_atlas:
         # Auto-Centering
         x_range = None
         y_range = None
+        zoom = st.session_state.atlas_zoom
 
         if active_dancer:
             target_row = df[df['name'] == active_dancer]
@@ -385,8 +403,8 @@ with tab_atlas:
                 # Dynamic zoom based on global scale
                 total_x = df['x'].max() - df['x'].min()
                 total_y = df['y'].max() - df['y'].min()
-                delta_x = max(total_x * 0.05, 1.5)
-                delta_y = max(total_y * 0.05, 1.5)
+                delta_x = max(total_x * 0.05, 1.5) * zoom
+                delta_y = max(total_y * 0.05, 1.5) * zoom
 
                 x_range = [tx - delta_x, tx + delta_x]
                 y_range = [ty - delta_y, ty + delta_y]
@@ -402,8 +420,8 @@ with tab_atlas:
                 std_y = df['y'].std()
 
                 # Fallback span if std is tiny
-                span_x = (std_x * 2.5) if std_x > 0.5 else 5.0
-                span_y = (std_y * 2.5) if std_y > 0.5 else 5.0
+                span_x = ((std_x * 2.5) if std_x > 0.5 else 5.0) * zoom
+                span_y = ((std_y * 2.5) if std_y > 0.5 else 5.0) * zoom
 
                 x_range = [centroid_x - span_x, centroid_x + span_x]
                 y_range = [centroid_y - span_y, centroid_y + span_y]
