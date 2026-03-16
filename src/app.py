@@ -57,6 +57,10 @@ st.markdown("""
             border-bottom: 1px solid #0e1117;
             font-weight: bold;
         }
+        /* Allow pinch-to-zoom on Plotly charts instead of browser handling it */
+        .stPlotlyChart {
+            touch-action: none;
+        }
     </style>
 """, unsafe_allow_html=True)
 
