@@ -348,7 +348,7 @@ with tab_atlas:
                 st.session_state.atlas_zoom = 1.0
                 st.rerun()
 
-        st.caption("💡 **Tip:** Double-tap a dot to select a dancer. Use the ➕/➖ buttons above to zoom.")
+        st.caption("📱 **Mobile Users:** Use the ➕/➖ buttons above to zoom, then double-tap a dot to select a dancer.")
 
         # --- Plot ---
         df['status'] = df['name'].apply(lambda x: 'Selected' if x == active_dancer else 'Normal')
