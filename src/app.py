@@ -347,6 +347,9 @@ with tab_atlas:
             if st.button("↩️", key="zoom_reset", use_container_width=True):
                 st.session_state.atlas_zoom = 1.0
                 st.rerun()
+
+        st.caption("💡 **Tip:** Double-tap a dot to select a dancer. Use the ➕/➖ buttons above to zoom.")
+
         # --- Plot ---
         df['status'] = df['name'].apply(lambda x: 'Selected' if x == active_dancer else 'Normal')
         df['final_size'] = df.apply(lambda row: 30 if row['name'] == active_dancer else row['size_log'], axis=1)
